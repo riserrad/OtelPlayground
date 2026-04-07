@@ -20,8 +20,8 @@ public class RepairSystem
     public RepairResult Repair(Subsystem subsystem, int requested)
     {
         // ┌─────────────────────────────────────────────────────────────────┐
-        // │ BUG: Repair leak                                               │
-        // │ Comment this block and uncomment the FIX block below to fix.   │
+        // │ BUG: Repair leak — to fix, just uncomment the FIX line below.  │
+        // │ The fix overrides the buggy value. One line change!            │
         // └─────────────────────────────────────────────────────────────────┘
         int applied;
         if (IsBugActive && subsystem.Name == _bugTargetSubsystem)
@@ -34,10 +34,9 @@ public class RepairSystem
         }
 
         // ┌─────────────────────────────────────────────────────────────────┐
-        // │ FIX: Correct repair logic                                      │
-        // │ Uncomment the line below and comment the BUG block above.      │
+        // │ FIX: Uncomment the line below to override the buggy value.     │
         // └─────────────────────────────────────────────────────────────────┘
-        // int applied = requested;
+        // applied = requested;
 
         double healthBefore = subsystem.Health;
         subsystem.Health = Math.Min(100, subsystem.Health + applied);
