@@ -26,6 +26,52 @@ Assume I know nothing about OpenTelemetry.
 
 Command line.
 
+# How it works
+
+The app uses **OpenTelemetry (OTel)** to emit telemetry — traces, metrics, and logs — every time something meaningful happens (a compliment is shown, the user likes/dislikes it, etc.).
+
+That telemetry is sent using **OTLP (OpenTelemetry Protocol)**, the standard wire format for shipping observability data. Think of OTLP as the "USB-C" of observability: one protocol that works with many backends. You instrument your app once, and can send telemetry to any OTLP-compatible receiver just by changing a URL — no code changes needed.
+
+The project has two apps:
+
+- **ComplimentGenerator** — the main app. Shows compliments, collects feedback, emits telemetry via OTLP.
+- **OTelWizard** — a sidecar that receives that telemetry and explains it in plain English, so you can learn what each trace, metric, and log means.
+
+# Running
+
+## Option 1: OTelWizard (learning mode)
+
+Start the wizard sidecar first, then the main app in a second terminal:
+
+```bash
+# Terminal 1
+cd src/OTelWizard
+dotnet run
+
+# Terminal 2
+cd src/ComplimentGenerator
+dotnet run
+```
+
+The wizard will display each piece of telemetry with color-coded explanations as it arrives.
+
+## Option 2: Aspire Dashboard (visual mode)
+
+The [.NET Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) gives you a full visual UI to explore traces, metrics, and logs. Requires Docker.
+
+```bash
+# Terminal 1 — start the dashboard
+docker run --rm -it -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard:latest
+
+# Terminal 2 — start the main app
+cd src/ComplimentGenerator
+dotnet run
+```
+
+Then open http://localhost:18888 in your browser.
+
+Since the ComplimentGenerator exports to `localhost:4317` by default, and the Docker command maps that port to the dashboard's OTLP receiver, it works with zero configuration. You can also change the endpoint with the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
+
 # Installation
 
 No installation for this first version. Must be a portable .exe.
