@@ -263,18 +263,24 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
     {
         if (result.Applied == 0)
         {
-            // Hard zero — record exception on the span
-            var ex = new InvalidOperationException(
-                $"Repair failed on {result.SubsystemName}: requested {result.Requested}% applied 0%");
-            repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            repairActivity?.AddException(ex);
-            repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
+            // Hard zero — throw/catch to capture a real stack trace
+            try
+            {
+                throw new InvalidOperationException(
+                    $"Repair failed on {result.SubsystemName}: requested {result.Requested}% applied 0%");
+            }
+            catch (InvalidOperationException ex)
+            {
+                repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                repairActivity?.AddException(ex);
+                repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
 
-            Telemetry.RepairsFailed.Add(1,
-                new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+                Telemetry.RepairsFailed.Add(1,
+                    new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
 
-            logger.LogError("Repair failed on {Name}: requested {Requested}% but applied 0%",
-                result.SubsystemName, result.Requested);
+                logger.LogError(ex, "Repair failed on {Name}: requested {Requested}% but applied 0%",
+                    result.SubsystemName, result.Requested);
+            }
         }
         else
         {
