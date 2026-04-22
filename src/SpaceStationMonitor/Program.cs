@@ -66,7 +66,7 @@ Console.CancelKeyPress += (_, e) =>
     shutdownCts.Cancel();
 };
 
-logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~3 min)",
+logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
     repairSystem.BugTargetSubsystem);
 
 // ── Main loop ───────────────────────────────────────────────────────────────
@@ -241,69 +241,65 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
 {
     var sub = station.Subsystems[subsystemIndex];
     var requested = repairSystem.GetRepairAmount();
+    var currentHealth = sub.Health;
+    var expectedHealth = Math.Min(100, currentHealth + requested);
 
     using var repairActivity = Telemetry.ActivitySource.StartActivity("RepairAction");
-    var result = repairSystem.Repair(sub, requested);
 
-    repairActivity?.SetTag("subsystem.name", result.SubsystemName);
-    repairActivity?.SetTag("repair.requested", result.Requested);
-    repairActivity?.SetTag("repair.applied", result.Applied);
-    repairActivity?.SetTag("repair.healthy", result.IsHealthy);
-
-    Telemetry.RepairsTotal.Add(1,
-        new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
-
-    double effectiveness = result.Requested > 0
-        ? (double)result.Applied / result.Requested * 100.0
-        : 0;
-    Telemetry.RepairEffectiveness.Record(effectiveness,
-        new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
-
-    if (!result.IsHealthy)
+    try
     {
-        if (result.Applied == 0)
-        {
-            // Hard zero — throw/catch to capture a real stack trace
-            try
-            {
-                throw new InvalidOperationException(
-                    $"Repair failed on {result.SubsystemName}: requested {result.Requested}% applied 0%");
-            }
-            catch (InvalidOperationException ex)
-            {
-                repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                repairActivity?.AddException(ex);
-                repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
+        var result = repairSystem.Repair(sub, requested);
 
-                Telemetry.RepairsFailed.Add(1,
-                    new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+        repairActivity?.SetTag("subsystem.name", result.SubsystemName);
+        repairActivity?.SetTag("repair.requested", result.Requested);
+        repairActivity?.SetTag("repair.applied", result.Applied);
+        repairActivity?.SetTag("repair.healthy", result.IsHealthy);
 
-                logger.LogError(ex, "Repair failed on {Name}: requested {Requested}% but applied 0%",
-                    result.SubsystemName, result.Requested);
-            }
-        }
-        else
+        Telemetry.RepairsTotal.Add(1,
+            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+
+        double effectiveness = result.Requested > 0
+            ? (double)result.Applied / result.Requested * 100.0
+            : 0;
+        Telemetry.RepairEffectiveness.Record(effectiveness,
+            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+
+        if (!result.IsHealthy)
         {
             // Leaky repair — record span event with delta
             repairActivity?.AddEvent(new ActivityEvent("RepairLeak",
                 tags: new ActivityTagsCollection
                 {
-                    { "repair.delta", result.Requested - result.Applied }
+                        { "repair.delta", result.Requested - result.Applied }
                 }));
 
             logger.LogError("Repair leak on {Name}: requested {Requested}% applied {Applied}%",
                 result.SubsystemName, result.Requested, result.Applied);
         }
+        else
+        {
+            logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
+                result.SubsystemName, result.HealthBefore, result.HealthAfter);
+        }
+
+        expectedHealth = result.DisplayedAfter; // The player sees the lie, not the reality
     }
-    else
+    catch (Exception ex)
     {
-        logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
-            result.SubsystemName, result.HealthBefore, result.HealthAfter);
+        repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        repairActivity?.AddException(ex);
+        repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
+
+        Telemetry.RepairsFailed.Add(1,
+                        new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+
+        logger.LogError(ex, "Repair failed on {Name}: requested {Requested}%",
+                        sub.Name, requested);
     }
 
-    // Display shows the lie (full expected values, not actual)
+    // Display shows the lie - simulating accidental exception swallow in the repair system that hides the critical failure from the player.
     display.SetRepairMessage(
-        $"Repaired {result.SubsystemName}: {result.HealthBefore:F0}% \u2192 {result.DisplayedAfter:F0}%");
+            $"Repaired {sub.Name}: {currentHealth:F0}% \u2192 {expectedHealth:F0}%");
     display.Render(station);
 }
 
