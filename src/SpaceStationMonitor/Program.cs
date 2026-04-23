@@ -12,19 +12,19 @@ using SpaceStationMonitor;
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(Telemetry.ServiceName);
 
-var tracerProvider = Sdk.CreateTracerProviderBuilder()
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .SetResourceBuilder(resourceBuilder)
     .AddSource(Telemetry.ActivitySourceName)
     .AddOtlpExporter()
     .Build();
 
-var meterProvider = Sdk.CreateMeterProviderBuilder()
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .SetResourceBuilder(resourceBuilder)
     .AddMeter(Telemetry.MeterName)
     .AddOtlpExporter()
     .Build();
 
-var loggerFactory = LoggerFactory.Create(builder =>
+using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.SetMinimumLevel(LogLevel.Information);
     builder.AddOpenTelemetry(logging =>
@@ -38,7 +38,48 @@ var loggerFactory = LoggerFactory.Create(builder =>
 
 var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
 
-// ── Game components ─────────────────────────────────────────────────────────
+// ── Splash gate ─────────────────────────────────────────────────────────────
+using var shutdownCts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    shutdownCts.Cancel();
+};
+
+// Drain any keys buffered before render so stray input doesn't skip the splash.
+while (Console.KeyAvailable) Console.ReadKey(intercept: true);
+
+GameDisplay.RenderStartScreen();
+
+bool quitFromSplash = false;
+try
+{
+    while (!shutdownCts.Token.IsCancellationRequested)
+    {
+        if (Console.KeyAvailable)
+        {
+            var splashKey = Console.ReadKey(intercept: true);
+            if (char.ToUpperInvariant(splashKey.KeyChar) == 'Q')
+            {
+                quitFromSplash = true;
+            }
+            break;
+        }
+        await Task.Delay(50, shutdownCts.Token);
+    }
+}
+catch (OperationCanceledException)
+{
+    // Ctrl+C during splash
+}
+
+if (quitFromSplash || shutdownCts.IsCancellationRequested)
+{
+    return;
+}
+
+// ── Game components — clocks (Station.StartTime, RepairSystem._startTime)
+//    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
 var station = new Station();
 var random = new Random();
 var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
@@ -46,7 +87,6 @@ var repairSystem = new RepairSystem(bugTarget);
 var eventEngine = new EventEngine();
 var cascadeEngine = new CascadeEngine();
 var display = new GameDisplay();
-var shutdownCts = new CancellationTokenSource();
 int selectedSubsystem = 0;
 
 // ── Register gauge metrics (need Station reference) ─────────────────────────
@@ -60,20 +100,62 @@ Telemetry.Meter.CreateObservableGauge<double>("station.hull.integrity",
     () => new Measurement<double>(station.HullIntegrity),
     "percent", "Overall station hull integrity");
 
-Console.CancelKeyPress += (_, e) =>
-{
-    e.Cancel = true;
-    shutdownCts.Cancel();
-};
-
 logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
     repairSystem.BugTargetSubsystem);
+
+// Show the pristine station before the first cycle degrades it.
+display.Render(station);
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 try
 {
     while (!shutdownCts.IsCancellationRequested && station.HullIntegrity > 0)
     {
+        // ── Wait for input or next cycle (player sees current state) ──
+        var cycleInterval = TimeSpan.FromSeconds(random.Next(5, 11));
+        using (var waitCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token))
+        {
+            waitCts.CancelAfter(cycleInterval);
+            try
+            {
+                while (!waitCts.Token.IsCancellationRequested)
+                {
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(intercept: true);
+                        switch (char.ToUpperInvariant(key.KeyChar))
+                        {
+                            case '1': selectedSubsystem = 0; display.Render(station); break;
+                            case '2': selectedSubsystem = 1; display.Render(station); break;
+                            case '3': selectedSubsystem = 2; display.Render(station); break;
+                            case '4': selectedSubsystem = 3; display.Render(station); break;
+
+                            case 'R':
+                                HandleRepair(station, repairSystem, selectedSubsystem, display, logger);
+                                break;
+
+                            case 'E':
+                                HandleEmergencyPower(station, display, logger);
+                                break;
+
+                            case 'Q':
+                                shutdownCts.Cancel();
+                                break;
+                        }
+                    }
+                    await Task.Delay(100, waitCts.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Wait timer expired or shutdown
+            }
+        }
+
+        display.SetRepairMessage(null);
+
+        if (shutdownCts.IsCancellationRequested) break;
+
         // ── Start cycle span ──
         using var cycleActivity = Telemetry.ActivitySource.StartActivity("StationCycle");
         cycleActivity?.SetTag("cycle.number", station.CycleCount + 1);
@@ -155,50 +237,8 @@ try
         logger.LogInformation("Station cycle {Cycle} complete \u2014 hull integrity {Hull:F1}%",
             station.CycleCount, station.HullIntegrity);
 
-        // ── Render display ──
+        // ── Render display (shown during next iteration's wait) ──
         display.Render(station);
-
-        // ── Wait for input or next cycle ──
-        var cycleInterval = TimeSpan.FromSeconds(random.Next(5, 11));
-        using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
-        cycleCts.CancelAfter(cycleInterval);
-
-        try
-        {
-            while (!cycleCts.Token.IsCancellationRequested)
-            {
-                if (Console.KeyAvailable)
-                {
-                    var key = Console.ReadKey(intercept: true);
-                    switch (char.ToUpperInvariant(key.KeyChar))
-                    {
-                        case '1': selectedSubsystem = 0; display.Render(station); break;
-                        case '2': selectedSubsystem = 1; display.Render(station); break;
-                        case '3': selectedSubsystem = 2; display.Render(station); break;
-                        case '4': selectedSubsystem = 3; display.Render(station); break;
-
-                        case 'R':
-                            HandleRepair(station, repairSystem, selectedSubsystem, display, logger);
-                            break;
-
-                        case 'E':
-                            HandleEmergencyPower(station, display, logger);
-                            break;
-
-                        case 'Q':
-                            shutdownCts.Cancel();
-                            break;
-                    }
-                }
-                await Task.Delay(100, cycleCts.Token);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Cycle timer expired or shutdown
-        }
-
-        display.SetRepairMessage(null);
     }
 }
 catch (OperationCanceledException)
@@ -229,10 +269,7 @@ Console.ResetColor();
 logger.LogInformation("Game over \u2014 Cycles: {Cycles}, Hull: {Hull:F1}%",
     station.CycleCount, station.HullIntegrity);
 
-// ── Cleanup ─────────────────────────────────────────────────────────────────
-meterProvider?.Dispose();
-tracerProvider?.Dispose();
-loggerFactory?.Dispose();
+// `using var` handles tracer/meter/logger provider disposal.
 
 // ── Helper methods ──────────────────────────────────────────────────────────
 

@@ -1069,7 +1069,7 @@ Console.CancelKeyPress += (_, e) =>
     shutdownCts.Cancel();
 };
 
-logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~3 min)",
+logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
     repairSystem.BugTargetSubsystem);
 
 // ── Main loop ───────────────────────────────────────────────────────────────
