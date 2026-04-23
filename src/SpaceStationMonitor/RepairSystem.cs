@@ -67,8 +67,8 @@ public class RepairSystem
             throw new GeneralSpaceStationException("Repair system failure: zero repair applied!");
         }
 
-        // Leaky: apply only 20-30% of requested
-        double leakFactor = 0.2 + (_random.NextDouble() * 0.1);
+        // Leaky: apply only 15-22% of requested
+        double leakFactor = 0.15 + (_random.NextDouble() * 0.07);
         return (int)(requested * leakFactor);
     }
 

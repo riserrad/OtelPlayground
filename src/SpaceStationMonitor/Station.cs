@@ -22,6 +22,7 @@ public class Station
 {
     private readonly Random _random = new();
     private double _difficultyMultiplier = 1.0;
+    private int _postBugCycles;
 
     public Subsystem[] Subsystems { get; } =
     [
@@ -38,10 +39,21 @@ public class Station
     public double HullIntegrity =>
         Subsystems.Average(s => Math.Max(0, s.Health));
 
-    public void StartNewCycle()
+    public void StartNewCycle(bool isBugActive)
     {
         CycleCount++;
-        _difficultyMultiplier = 1.0 + (CycleCount * 0.02);
+
+        // Pre-bug: flat 1.0 (fun, winnable baseline).
+        // Post-bug: step to 1.5x on activation, then +0.04 per cycle (compounding collapse).
+        if (isBugActive)
+        {
+            _postBugCycles++;
+            _difficultyMultiplier = 1.5 + (_postBugCycles * 0.04);
+        }
+        else
+        {
+            _difficultyMultiplier = 1.0;
+        }
     }
 
     public void DegradeSubsystem(Subsystem subsystem)

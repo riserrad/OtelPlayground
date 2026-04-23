@@ -30,7 +30,7 @@ public class StationTests
     public void DegradeSubsystem_ReducesHealth()
     {
         var station = new Station();
-        station.StartNewCycle();
+        station.StartNewCycle(isBugActive: false);
         var sub = station.Subsystems[0];
         var before = sub.Health;
 
@@ -45,7 +45,7 @@ public class StationTests
     public void DegradeSubsystem_HealthNeverBelowZero()
     {
         var station = new Station();
-        station.StartNewCycle();
+        station.StartNewCycle(isBugActive: false);
         var sub = station.Subsystems[0];
 
         for (int i = 0; i < 1000; i++)

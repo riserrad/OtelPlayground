@@ -112,7 +112,9 @@ try
     while (!shutdownCts.IsCancellationRequested && station.HullIntegrity > 0)
     {
         // ── Wait for input or next cycle (player sees current state) ──
-        var cycleInterval = TimeSpan.FromSeconds(random.Next(5, 11));
+        // Pre-bug: 4-8s (fun rhythm). Post-bug: 2-4s (player loses tempo).
+        var cycleInterval = TimeSpan.FromSeconds(
+            repairSystem.IsBugActive ? random.Next(2, 5) : random.Next(4, 9));
         using (var waitCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token))
         {
             waitCts.CancelAfter(cycleInterval);
@@ -157,10 +159,14 @@ try
         if (shutdownCts.IsCancellationRequested) break;
 
         // ── Start cycle span ──
+        // Snapshot bug state once per cycle so all phases of the tick see the same value.
+        bool isBugActive = repairSystem.IsBugActive;
+
         using var cycleActivity = Telemetry.ActivitySource.StartActivity("StationCycle");
         cycleActivity?.SetTag("cycle.number", station.CycleCount + 1);
+        cycleActivity?.SetTag("bug.active", isBugActive);
 
-        station.StartNewCycle();
+        station.StartNewCycle(isBugActive);
 
         // ── Subsystem degradation (one child span per subsystem) ──
         foreach (var sub in station.Subsystems)
@@ -181,7 +187,7 @@ try
         }
 
         // ── Cascade check ──
-        var cascades = cascadeEngine.CheckAndApplyCascades(station);
+        var cascades = cascadeEngine.CheckAndApplyCascades(station, isBugActive);
 
         var criticalSystems = station.Subsystems.Where(s => s.IsCritical).Select(s => s.Name).ToArray();
         display.SetWarning(criticalSystems.Length > 0
@@ -206,7 +212,7 @@ try
         }
 
         // ── Random events ──
-        var stationEvent = eventEngine.TryGenerateEvent();
+        var stationEvent = eventEngine.TryGenerateEvent(isBugActive);
         if (stationEvent != null)
         {
             using var eventActivity = Telemetry.ActivitySource.StartActivity("StationEvent");

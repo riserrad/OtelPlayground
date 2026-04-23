@@ -11,7 +11,7 @@ public class CascadeEngineTests
         var station = new Station();
         var engine = new CascadeEngine();
 
-        var results = engine.CheckAndApplyCascades(station);
+        var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
         Assert.Empty(results);
         foreach (var sub in station.Subsystems)
@@ -25,7 +25,7 @@ public class CascadeEngineTests
         station.Subsystems[0].Health = 20; // Oxygen goes critical
         var engine = new CascadeEngine();
 
-        var results = engine.CheckAndApplyCascades(station);
+        var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
         Assert.Single(results);
         Assert.Equal("Oxygen", results[0].SourceSubsystem);
@@ -47,7 +47,7 @@ public class CascadeEngineTests
         station.Subsystems[2].Health = 15; // Shields critical
         var engine = new CascadeEngine();
 
-        var results = engine.CheckAndApplyCascades(station);
+        var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
         Assert.Equal(2, results.Count);
 
