@@ -94,7 +94,7 @@ public class GameDisplay
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
         WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
-        WritePaddedLine($"  [Q] Quit       Emergency Power: {station.EmergencyPowerRemaining,-3} left        ");
+        WritePaddedLine($"  [Q] Quit   Emerg Pwr: {station.EmergencyPowerRemaining,-2} |  Repairs: {station.RepairsRemainingThisCycle,-2} left");
         WritePaddedLine($"  Cycle: {station.CycleCount,-9}|  Uptime: {uptimeStr,-21}");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();

@@ -100,4 +100,59 @@ public class StationTests
         sub.Health = 30;
         Assert.False(sub.IsCritical);
     }
+
+    [Fact]
+    public void NewStation_StartsWith3RepairsRemaining()
+    {
+        var station = new Station();
+
+        Assert.Equal(3, station.RepairsRemainingThisCycle);
+    }
+
+    [Fact]
+    public void TryConsumeRepair_DecrementsCounter()
+    {
+        var station = new Station();
+
+        Assert.True(station.TryConsumeRepair());
+
+        Assert.Equal(2, station.RepairsRemainingThisCycle);
+    }
+
+    [Fact]
+    public void TryConsumeRepair_ReturnsFalseWhenExhausted()
+    {
+        var station = new Station();
+
+        Assert.True(station.TryConsumeRepair());
+        Assert.True(station.TryConsumeRepair());
+        Assert.True(station.TryConsumeRepair());
+        Assert.False(station.TryConsumeRepair()); // 4th attempt fails
+        Assert.Equal(0, station.RepairsRemainingThisCycle);
+    }
+
+    [Fact]
+    public void StartNewCycle_ResetsRepairsRemaining()
+    {
+        var station = new Station();
+        station.TryConsumeRepair();
+        station.TryConsumeRepair();
+
+        station.StartNewCycle(isBugActive: false);
+
+        Assert.Equal(3, station.RepairsRemainingThisCycle);
+    }
+
+    [Fact]
+    public void Station_RespectsCustomRepairsPerCycle()
+    {
+        var station = new Station(repairsPerCycle: 1);
+
+        Assert.Equal(1, station.RepairsRemainingThisCycle);
+        Assert.True(station.TryConsumeRepair());
+        Assert.False(station.TryConsumeRepair());
+
+        station.StartNewCycle(isBugActive: false);
+        Assert.Equal(1, station.RepairsRemainingThisCycle);
+    }
 }
