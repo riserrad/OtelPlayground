@@ -12,19 +12,19 @@ using SpaceStationMonitor;
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(Telemetry.ServiceName);
 
-var tracerProvider = Sdk.CreateTracerProviderBuilder()
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .SetResourceBuilder(resourceBuilder)
     .AddSource(Telemetry.ActivitySourceName)
     .AddOtlpExporter()
     .Build();
 
-var meterProvider = Sdk.CreateMeterProviderBuilder()
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .SetResourceBuilder(resourceBuilder)
     .AddMeter(Telemetry.MeterName)
     .AddOtlpExporter()
     .Build();
 
-var loggerFactory = LoggerFactory.Create(builder =>
+using var loggerFactory = LoggerFactory.Create(builder =>
 {
     builder.SetMinimumLevel(LogLevel.Information);
     builder.AddOpenTelemetry(logging =>
@@ -38,7 +38,48 @@ var loggerFactory = LoggerFactory.Create(builder =>
 
 var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
 
-// ── Game components ─────────────────────────────────────────────────────────
+// ── Splash gate ─────────────────────────────────────────────────────────────
+using var shutdownCts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    shutdownCts.Cancel();
+};
+
+// Drain any keys buffered before render so stray input doesn't skip the splash.
+while (Console.KeyAvailable) Console.ReadKey(intercept: true);
+
+GameDisplay.RenderStartScreen();
+
+bool quitFromSplash = false;
+try
+{
+    while (!shutdownCts.Token.IsCancellationRequested)
+    {
+        if (Console.KeyAvailable)
+        {
+            var splashKey = Console.ReadKey(intercept: true);
+            if (char.ToUpperInvariant(splashKey.KeyChar) == 'Q')
+            {
+                quitFromSplash = true;
+            }
+            break;
+        }
+        await Task.Delay(50, shutdownCts.Token);
+    }
+}
+catch (OperationCanceledException)
+{
+    // Ctrl+C during splash
+}
+
+if (quitFromSplash || shutdownCts.IsCancellationRequested)
+{
+    return;
+}
+
+// ── Game components — clocks (Station.StartTime, RepairSystem._startTime)
+//    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
 var station = new Station();
 var random = new Random();
 var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
@@ -46,7 +87,6 @@ var repairSystem = new RepairSystem(bugTarget);
 var eventEngine = new EventEngine();
 var cascadeEngine = new CascadeEngine();
 var display = new GameDisplay();
-var shutdownCts = new CancellationTokenSource();
 int selectedSubsystem = 0;
 
 // ── Register gauge metrics (need Station reference) ─────────────────────────
@@ -60,25 +100,73 @@ Telemetry.Meter.CreateObservableGauge<double>("station.hull.integrity",
     () => new Measurement<double>(station.HullIntegrity),
     "percent", "Overall station hull integrity");
 
-Console.CancelKeyPress += (_, e) =>
-{
-    e.Cancel = true;
-    shutdownCts.Cancel();
-};
-
-logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~3 min)",
+logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
     repairSystem.BugTargetSubsystem);
+
+// Show the pristine station before the first cycle degrades it.
+display.Render(station);
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 try
 {
     while (!shutdownCts.IsCancellationRequested && station.HullIntegrity > 0)
     {
+        // ── Wait for input or next cycle (player sees current state) ──
+        // Pre-bug: 4-8s (fun rhythm). Post-bug: 2-4s (player loses tempo).
+        var cycleInterval = TimeSpan.FromSeconds(
+            repairSystem.IsBugActive ? random.Next(2, 5) : random.Next(4, 9));
+        using (var waitCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token))
+        {
+            waitCts.CancelAfter(cycleInterval);
+            try
+            {
+                while (!waitCts.Token.IsCancellationRequested)
+                {
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(intercept: true);
+                        switch (char.ToUpperInvariant(key.KeyChar))
+                        {
+                            case '1': selectedSubsystem = 0; display.Render(station); break;
+                            case '2': selectedSubsystem = 1; display.Render(station); break;
+                            case '3': selectedSubsystem = 2; display.Render(station); break;
+                            case '4': selectedSubsystem = 3; display.Render(station); break;
+
+                            case 'R':
+                                HandleRepair(station, repairSystem, selectedSubsystem, display, logger);
+                                break;
+
+                            case 'E':
+                                HandleEmergencyPower(station, display, logger);
+                                break;
+
+                            case 'Q':
+                                shutdownCts.Cancel();
+                                break;
+                        }
+                    }
+                    await Task.Delay(100, waitCts.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Wait timer expired or shutdown
+            }
+        }
+
+        display.SetRepairMessage(null);
+
+        if (shutdownCts.IsCancellationRequested) break;
+
         // ── Start cycle span ──
+        // Snapshot bug state once per cycle so all phases of the tick see the same value.
+        bool isBugActive = repairSystem.IsBugActive;
+
         using var cycleActivity = Telemetry.ActivitySource.StartActivity("StationCycle");
         cycleActivity?.SetTag("cycle.number", station.CycleCount + 1);
+        cycleActivity?.SetTag("bug.active", isBugActive);
 
-        station.StartNewCycle();
+        station.StartNewCycle(isBugActive);
 
         // ── Subsystem degradation (one child span per subsystem) ──
         foreach (var sub in station.Subsystems)
@@ -99,7 +187,7 @@ try
         }
 
         // ── Cascade check ──
-        var cascades = cascadeEngine.CheckAndApplyCascades(station);
+        var cascades = cascadeEngine.CheckAndApplyCascades(station, isBugActive);
 
         var criticalSystems = station.Subsystems.Where(s => s.IsCritical).Select(s => s.Name).ToArray();
         display.SetWarning(criticalSystems.Length > 0
@@ -124,7 +212,7 @@ try
         }
 
         // ── Random events ──
-        var stationEvent = eventEngine.TryGenerateEvent();
+        var stationEvent = eventEngine.TryGenerateEvent(isBugActive);
         if (stationEvent != null)
         {
             using var eventActivity = Telemetry.ActivitySource.StartActivity("StationEvent");
@@ -155,50 +243,8 @@ try
         logger.LogInformation("Station cycle {Cycle} complete \u2014 hull integrity {Hull:F1}%",
             station.CycleCount, station.HullIntegrity);
 
-        // ── Render display ──
+        // ── Render display (shown during next iteration's wait) ──
         display.Render(station);
-
-        // ── Wait for input or next cycle ──
-        var cycleInterval = TimeSpan.FromSeconds(random.Next(5, 11));
-        using var cycleCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
-        cycleCts.CancelAfter(cycleInterval);
-
-        try
-        {
-            while (!cycleCts.Token.IsCancellationRequested)
-            {
-                if (Console.KeyAvailable)
-                {
-                    var key = Console.ReadKey(intercept: true);
-                    switch (char.ToUpperInvariant(key.KeyChar))
-                    {
-                        case '1': selectedSubsystem = 0; display.Render(station); break;
-                        case '2': selectedSubsystem = 1; display.Render(station); break;
-                        case '3': selectedSubsystem = 2; display.Render(station); break;
-                        case '4': selectedSubsystem = 3; display.Render(station); break;
-
-                        case 'R':
-                            HandleRepair(station, repairSystem, selectedSubsystem, display, logger);
-                            break;
-
-                        case 'E':
-                            HandleEmergencyPower(station, display, logger);
-                            break;
-
-                        case 'Q':
-                            shutdownCts.Cancel();
-                            break;
-                    }
-                }
-                await Task.Delay(100, cycleCts.Token);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Cycle timer expired or shutdown
-        }
-
-        display.SetRepairMessage(null);
     }
 }
 catch (OperationCanceledException)
@@ -229,10 +275,7 @@ Console.ResetColor();
 logger.LogInformation("Game over \u2014 Cycles: {Cycles}, Hull: {Hull:F1}%",
     station.CycleCount, station.HullIntegrity);
 
-// ── Cleanup ─────────────────────────────────────────────────────────────────
-meterProvider?.Dispose();
-tracerProvider?.Dispose();
-loggerFactory?.Dispose();
+// `using var` handles tracer/meter/logger provider disposal.
 
 // ── Helper methods ──────────────────────────────────────────────────────────
 
@@ -240,64 +283,77 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
     GameDisplay display, ILogger logger)
 {
     var sub = station.Subsystems[subsystemIndex];
+
+    if (!station.TryConsumeRepair())
+    {
+        Telemetry.RepairsDenied.Add(1,
+            new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+        logger.LogInformation("Repair denied on {Name}: quota exhausted this cycle", sub.Name);
+        display.SetRepairMessage("No repairs left this cycle — wait for next tick");
+        display.Render(station);
+        return;
+    }
+
     var requested = repairSystem.GetRepairAmount();
+    var currentHealth = sub.Health;
+    var expectedHealth = Math.Min(100, currentHealth + requested);
 
     using var repairActivity = Telemetry.ActivitySource.StartActivity("RepairAction");
-    var result = repairSystem.Repair(sub, requested);
 
-    repairActivity?.SetTag("subsystem.name", result.SubsystemName);
-    repairActivity?.SetTag("repair.requested", result.Requested);
-    repairActivity?.SetTag("repair.applied", result.Applied);
-    repairActivity?.SetTag("repair.healthy", result.IsHealthy);
-
-    Telemetry.RepairsTotal.Add(1,
-        new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
-
-    double effectiveness = result.Requested > 0
-        ? (double)result.Applied / result.Requested * 100.0
-        : 0;
-    Telemetry.RepairEffectiveness.Record(effectiveness,
-        new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
-
-    if (!result.IsHealthy)
+    try
     {
-        if (result.Applied == 0)
-        {
-            // Hard zero — record exception on the span
-            var ex = new InvalidOperationException(
-                $"Repair failed on {result.SubsystemName}: requested {result.Requested}% applied 0%");
-            repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            repairActivity?.AddException(ex);
-            repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
+        var result = repairSystem.Repair(sub, requested);
 
-            Telemetry.RepairsFailed.Add(1,
-                new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+        repairActivity?.SetTag("subsystem.name", result.SubsystemName);
+        repairActivity?.SetTag("repair.requested", result.Requested);
+        repairActivity?.SetTag("repair.applied", result.Applied);
+        repairActivity?.SetTag("repair.healthy", result.IsHealthy);
 
-            logger.LogError("Repair failed on {Name}: requested {Requested}% but applied 0%",
-                result.SubsystemName, result.Requested);
-        }
-        else
+        Telemetry.RepairsTotal.Add(1,
+            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+
+        double effectiveness = result.Requested > 0
+            ? (double)result.Applied / result.Requested * 100.0
+            : 0;
+        Telemetry.RepairEffectiveness.Record(effectiveness,
+            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+
+        if (!result.IsHealthy)
         {
             // Leaky repair — record span event with delta
             repairActivity?.AddEvent(new ActivityEvent("RepairLeak",
                 tags: new ActivityTagsCollection
                 {
-                    { "repair.delta", result.Requested - result.Applied }
+                        { "repair.delta", result.Requested - result.Applied }
                 }));
 
             logger.LogError("Repair leak on {Name}: requested {Requested}% applied {Applied}%",
                 result.SubsystemName, result.Requested, result.Applied);
         }
+        else
+        {
+            logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
+                result.SubsystemName, result.HealthBefore, result.HealthAfter);
+        }
+
+        expectedHealth = result.DisplayedAfter; // The player sees the lie, not the reality
     }
-    else
+    catch (Exception ex)
     {
-        logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
-            result.SubsystemName, result.HealthBefore, result.HealthAfter);
+        repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        repairActivity?.AddException(ex);
+        repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
+
+        Telemetry.RepairsFailed.Add(1,
+                        new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+
+        logger.LogError(ex, "Repair failed on {Name}: requested {Requested}%",
+                        sub.Name, requested);
     }
 
-    // Display shows the lie (full expected values, not actual)
+    // Display shows the lie - simulating accidental exception swallow in the repair system that hides the critical failure from the player.
     display.SetRepairMessage(
-        $"Repaired {result.SubsystemName}: {result.HealthBefore:F0}% \u2192 {result.DisplayedAfter:F0}%");
+            $"Repaired {sub.Name}: {currentHealth:F0}% \u2192 {expectedHealth:F0}%");
     display.Render(station);
 }
 

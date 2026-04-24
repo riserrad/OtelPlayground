@@ -19,6 +19,10 @@ public static class Telemetry
     public static readonly Counter<long> RepairsFailed =
         Meter.CreateCounter<long>("station.repairs.failed", description: "Hard-zero repair failures");
 
+    public static readonly Counter<long> RepairsDenied =
+        Meter.CreateCounter<long>("station.repairs.denied",
+            description: "Repair attempts blocked by per-cycle quota");
+
     public static readonly Counter<long> CascadeFailures =
         Meter.CreateCounter<long>("station.cascade.failures", description: "Cascade failure events");
 

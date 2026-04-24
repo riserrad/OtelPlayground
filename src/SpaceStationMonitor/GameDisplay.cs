@@ -2,6 +2,8 @@ namespace SpaceStationMonitor;
 
 public class GameDisplay
 {
+    private const int InnerWidth = 50;
+
     private string? _currentEvent;
     private string? _currentWarning;
     private string? _lastRepairMessage;
@@ -9,6 +11,22 @@ public class GameDisplay
     public void SetEvent(string? message) => _currentEvent = message;
     public void SetWarning(string? message) => _currentWarning = message;
     public void SetRepairMessage(string? message) => _lastRepairMessage = message;
+
+    public static void RenderStartScreen()
+    {
+        Console.Clear();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("╔══════════════════════════════════════════════════╗");
+        Console.WriteLine("║          SPACE STATION MONITOR v1.0              ║");
+        Console.WriteLine("╠══════════════════════════════════════════════════╣");
+        Console.WriteLine("║                                                  ║");
+        Console.WriteLine("║             Press any key to start               ║");
+        Console.WriteLine("║                                                  ║");
+        Console.WriteLine("╠══════════════════════════════════════════════════╣");
+        Console.WriteLine("║                    Q to quit                     ║");
+        Console.WriteLine("╚══════════════════════════════════════════════════╝");
+        Console.ResetColor();
+    }
 
     public void Render(Station station)
     {
@@ -19,10 +37,10 @@ public class GameDisplay
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
-        Console.WriteLine("║          SPACE STATION MONITOR v1.0              ║");
+        WritePaddedLine("          SPACE STATION MONITOR v1.0              ");
 
         Console.ForegroundColor = station.HullIntegrity < 30 ? ConsoleColor.Red : ConsoleColor.Cyan;
-        Console.WriteLine($"║          Hull Integrity: {hullStr,-25}║");
+        WritePaddedLine($"          Hull Integrity: {hullStr,-24}");
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
@@ -42,7 +60,7 @@ public class GameDisplay
                 _ => ConsoleColor.Green
             };
 
-            Console.WriteLine($"║  [{i + 1}] {sub.Name,-16} {bar}  {healthStr,-4}{warning}  ║");
+            WritePaddedLine($"  [{i + 1}] {sub.Name,-16} {bar}  {healthStr,-4}{warning}   ");
         }
 
         Console.ForegroundColor = ConsoleColor.Cyan;
@@ -75,19 +93,16 @@ public class GameDisplay
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
-        Console.WriteLine("║  [1-4] Select   [R] Repair   [E] Emergency Pwr  ║");
-        Console.WriteLine($"║  [Q] Quit       Emergency Power: {station.EmergencyPowerRemaining} left          ║");
-        Console.WriteLine($"║  Cycle: {station.CycleCount,-7}|  Uptime: {uptimeStr,-19}║");
+        WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
+        WritePaddedLine($"  [Q] Quit   Emerg Pwr: {station.EmergencyPowerRemaining,-2} |  Repairs: {station.RepairsRemainingThisCycle,-2} left");
+        WritePaddedLine($"  Cycle: {station.CycleCount,-9}|  Uptime: {uptimeStr,-21}");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
     }
 
     private static void WritePaddedLine(string content)
     {
-        // Box is 50 chars wide including borders
-        const int boxWidth = 50;
-        var inner = content.Length > boxWidth - 4 ? content[..(boxWidth - 4)] : content;
-        var padding = boxWidth - 2 - inner.Length; // 2 for ║ borders
-        Console.WriteLine($"║{inner}{new string(' ', Math.Max(0, padding))}║");
+        var inner = content.Length > InnerWidth ? content[..InnerWidth] : content;
+        Console.WriteLine($"║{inner}{new string(' ', InnerWidth - inner.Length)}║");
     }
 }

@@ -10,7 +10,7 @@ public class RepairSystem
 
     public RepairSystem(string bugTargetSubsystem, TimeSpan? bugActivationDelay = null)
     {
-        _bugActivationDelay = bugActivationDelay ?? TimeSpan.FromMinutes(3);
+        _bugActivationDelay = bugActivationDelay ?? TimeSpan.FromMinutes(2);
         _bugTargetSubsystem = bugTargetSubsystem;
     }
 
@@ -63,11 +63,12 @@ public class RepairSystem
         // 10% chance of hard zero, but only after 2+ leaky repairs
         if (_leakyRepairCount > 2 && _random.NextDouble() < 0.1)
         {
-            return 0;
+            // This simulates a critical failure in the repair system, causing no repair to be applied.
+            throw new GeneralSpaceStationException("Repair system failure: zero repair applied!");
         }
 
-        // Leaky: apply only 20-30% of requested
-        double leakFactor = 0.2 + (_random.NextDouble() * 0.1);
+        // Leaky: apply only 15-22% of requested
+        double leakFactor = 0.15 + (_random.NextDouble() * 0.07);
         return (int)(requested * leakFactor);
     }
 

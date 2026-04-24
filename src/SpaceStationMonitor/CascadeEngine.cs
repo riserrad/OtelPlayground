@@ -8,9 +8,10 @@ public record CascadeResult(
 
 public class CascadeEngine
 {
-    public List<CascadeResult> CheckAndApplyCascades(Station station)
+    public List<CascadeResult> CheckAndApplyCascades(Station station, bool isBugActive)
     {
         var results = new List<CascadeResult>();
+        double increment = isBugActive ? 0.8 : 0.5;
 
         // Reset all cascade multipliers
         foreach (var sub in station.Subsystems)
@@ -26,7 +27,7 @@ public class CascadeEngine
                 .ToArray();
 
             foreach (var target in affected)
-                target.CascadeMultiplier += 0.5;
+                target.CascadeMultiplier += increment;
 
             results.Add(new CascadeResult(
                 SourceSubsystem: sub.Name,

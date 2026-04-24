@@ -26,14 +26,27 @@ public class EventEngine
     private readonly Random _random = new();
     private static readonly string[] SubsystemNames = ["Oxygen", "Power", "Shields", "Thermal"];
 
-    public StationEvent? TryGenerateEvent()
+    public StationEvent? TryGenerateEvent(bool isBugActive)
     {
-        // ~20% chance per cycle
-        if (_random.NextDouble() > 0.2)
+        // Pre-bug: ~20% per cycle, uniform severity.
+        // Post-bug: ~45% per cycle, biased toward Moderate/Severe (20/40/40).
+        double eventChance = isBugActive ? 0.45 : 0.2;
+        if (_random.NextDouble() > eventChance)
             return null;
 
         var type = (StationEventType)_random.Next(3);
-        var severity = (EventSeverity)_random.Next(3);
+        EventSeverity severity;
+        if (isBugActive)
+        {
+            double roll = _random.NextDouble();
+            severity = roll < 0.20 ? EventSeverity.Minor
+                     : roll < 0.60 ? EventSeverity.Moderate
+                                   : EventSeverity.Severe;
+        }
+        else
+        {
+            severity = (EventSeverity)_random.Next(3);
+        }
 
         var targetSubsystem = type switch
         {
