@@ -33,6 +33,15 @@ dotnet publish src/SpaceStationMonitor -c Release -r win-x64 --self-contained tr
 dotnet publish src/SpaceStationMonitor -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
+Endpoint is overridable via `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
+## Target Frameworks
+
+- **SpaceStationMonitor + tests:** `net10.0`
+- **ComplimentGenerator + OTelWizard:** `net8.0`
+
+Don't unify these unintentionally — SpaceStationMonitor was bumped to 10 deliberately.
+
 ## Architecture
 
 - **src/SpaceStationMonitor/** - The game. Console app with OTel instrumentation.
@@ -53,7 +62,14 @@ dotnet publish src/SpaceStationMonitor -c Release -r linux-x64 --self-contained 
 
 - **tests/SpaceStationMonitor.Tests/** - Unit tests for Station, RepairSystem, and CascadeEngine.
 
-## OTel Instrumentation
+**Span hierarchy per cycle:**
+```
+StationCycle (root)
+├── SubsystemTick × 4      (one per subsystem, with health.before/after tags)
+├── RepairAction           (only on player repair; span events on leak/failure)
+├── CascadeCheck           (when any subsystem is critical)
+└── StationEvent           (on random events)
+```
 
 - **Service name:** `SpaceStationMonitor`
 - **Traces:** `StationCycle` (parent span per cycle), `SubsystemTick` (per subsystem), `RepairAction`, `CascadeCheck`, `StationEvent`

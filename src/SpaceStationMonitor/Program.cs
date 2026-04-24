@@ -283,6 +283,17 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
     GameDisplay display, ILogger logger)
 {
     var sub = station.Subsystems[subsystemIndex];
+
+    if (!station.TryConsumeRepair())
+    {
+        Telemetry.RepairsDenied.Add(1,
+            new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+        logger.LogInformation("Repair denied on {Name}: quota exhausted this cycle", sub.Name);
+        display.SetRepairMessage("No repairs left this cycle — wait for next tick");
+        display.Render(station);
+        return;
+    }
+
     var requested = repairSystem.GetRepairAmount();
     var currentHealth = sub.Health;
     var expectedHealth = Math.Min(100, currentHealth + requested);
