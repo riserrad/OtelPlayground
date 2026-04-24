@@ -488,3 +488,10 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 .claude/settings.local.json
+
+# Clubhouse agent manager
+.clubhouse/agents/
+.clubhouse/.local/
+.clubhouse/agents.json
+.clubhouse/agents.json.bak
+.clubhouse/settings.local.json

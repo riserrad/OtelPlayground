@@ -1,77 +1,102 @@
-# Overview
+# Space Station Monitor
 
-I am creating this project as a pet project to help me learn more about how OpenTelemetry works.
+**Learn OpenTelemetry by keeping a space station alive.**
 
-I will ask Claude to create the code to build a simple console application to generate random compliments to my wife.
+You're in charge of a space station with four subsystems: Oxygen, Power, Shields, and Thermal. They degrade over time. Random events hit you. Failures cascade. Your job is to keep the hull integrity above zero for as long as you can.
 
-# Application
+Oh, and the whole thing is wired up with OpenTelemetry. Every cycle, every repair, every cascade failure emits traces, metrics, and logs. You get to see exactly what observability looks like in a real (well, simulated) system.
 
-I want to build a console application that will generate random compliments so I can send them to my wife. I don't want to ask the application to generate a compliment. As long as I keep it open, it will generate compliments at random time intervals. These intervals need to be reasonable - i.e., it can't be like after 10 seconds from the previous one. Let's say that the intervals must be between 1 and 10 minutes.
+## Quick Start
 
-The console must allow me to like or dislike a generated compliment. But if another compliment is generated and I provide no response, it should just skip my evaluation.
+**You need:**
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- [Docker](https://www.docker.com/products/docker-desktop/) (strongly recommended for viewing telemetry)
 
-At the end of the day, I want the app to generate a report of how many compliments it generated, how many I liked and how many I disliked.
+Without Docker, the game runs fine on its own. You just won't be able to see the telemetry it emits. That's like playing with your eyes closed, so... Docker.
 
-It cannot generate duplicate compliments within a day.
-
-# Tech stack
-
-I want to use C#. Remember: my main goal is to emit telemetry with Open Telemetry and learn how it works.
-
-So if the application can have a side "wizard" telling "look, as this event occurred, I have sent telemetry that you can view from [teach how to query the telemtry]".
-
-Assume I know nothing about OpenTelemetry.
-
-# Interface
-
-Command line.
-
-# How it works
-
-The app uses **OpenTelemetry (OTel)** to emit telemetry — traces, metrics, and logs — every time something meaningful happens (a compliment is shown, the user likes/dislikes it, etc.).
-
-That telemetry is sent using **OTLP (OpenTelemetry Protocol)**, the standard wire format for shipping observability data. Think of OTLP as the "USB-C" of observability: one protocol that works with many backends. You instrument your app once, and can send telemetry to any OTLP-compatible receiver just by changing a URL — no code changes needed.
-
-The project has two apps:
-
-- **ComplimentGenerator** — the main app. Shows compliments, collects feedback, emits telemetry via OTLP.
-- **OTelWizard** — a sidecar that receives that telemetry and explains it in plain English, so you can learn what each trace, metric, and log means.
-
-# Running
-
-## Option 1: OTelWizard (learning mode)
-
-Start the wizard sidecar first, then the main app in a second terminal:
+**Run it:**
 
 ```bash
-# Terminal 1
-cd src/OTelWizard
-dotnet run
-
-# Terminal 2
-cd src/ComplimentGenerator
-dotnet run
-```
-
-The wizard will display each piece of telemetry with color-coded explanations as it arrives.
-
-## Option 2: Aspire Dashboard (visual mode)
-
-The [.NET Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) gives you a full visual UI to explore traces, metrics, and logs. Requires Docker.
-
-```bash
-# Terminal 1 — start the dashboard
+# Terminal 1: start the Aspire Dashboard (so you can see the telemetry)
 docker run --rm -it -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard:latest
 
-# Terminal 2 — start the main app
-cd src/ComplimentGenerator
+# Terminal 2: start the game
+cd src/SpaceStationMonitor
 dotnet run
 ```
 
-Then open http://localhost:18888 in your browser.
+Open http://localhost:18888 in your browser to explore traces, metrics, and logs as you play.
 
-Since the ComplimentGenerator exports to `localhost:4317` by default, and the Docker command maps that port to the dashboard's OTLP receiver, it works with zero configuration. You can also change the endpoint with the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
+The game exports telemetry to `localhost:4317` via OTLP, and the Docker command maps that port to the Aspire Dashboard's receiver. No extra config needed.
 
-# Installation
+If port 4317 is already in use (another collector, a previous Docker run), you'll need to stop whatever is using it first, or change the endpoint with the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
 
-No installation for this first version. Must be a portable .exe.
+## How to Play
+
+| Key | Action |
+|-----|--------|
+| **1-4** | Select a subsystem |
+| **R** | Repair the selected subsystem |
+| **E** | Use emergency power (boosts all systems, limited uses) |
+| **Q** or **Ctrl+C** | Quit |
+
+Every few seconds, a new cycle runs. Subsystems lose health. Random events (solar flares, micrometeorites, power surges) can hit at any time. When a subsystem drops below 30% health, it triggers cascade failures that speed up degradation on everything else.
+
+You get 3 emergency power charges. Use them wisely.
+
+**Here's the thing:** something in the station isn't working the way it should. The game won't tell you what it is. But the telemetry will. Can you figure out what's going wrong by looking at the traces and metrics in the Aspire Dashboard?
+
+## What Telemetry Gets Emitted
+
+This is where the learning happens. The game emits telemetry using the [OpenTelemetry SDK for .NET](https://opentelemetry.io/docs/languages/dotnet/), exported via [OTLP](https://opentelemetry.io/docs/specs/otlp/) (the standard protocol for shipping observability data).
+
+### Traces
+
+Each game cycle creates a parent span with child spans for individual operations:
+
+- **StationCycle** - one per game cycle, tags: cycle number, hull integrity, bug state
+- **SubsystemTick** - one per subsystem per cycle, tags: health before/after, degradation rate
+- **RepairAction** - when you press R, tags: subsystem name, repair requested vs. applied
+- **CascadeCheck** - when a cascade failure triggers, tags: source and affected subsystems
+- **StationEvent** - when a random event hits, tags: event type, severity, affected subsystem
+
+### Metrics
+
+The game tracks a handful of counters: `station.repairs.total`, `station.repairs.failed`, `station.cascade.failures`, `station.events.total`, and `station.cycles.total`. These count what you'd expect from the names.
+
+There's also a histogram (`station.repair.effectiveness`) that records how much of each repair actually got applied vs. what was requested. A healthy repair scores 100%. If you see numbers below that... well, that's a clue.
+
+Two gauges give you a live view: `station.subsystem.health` (per subsystem) and `station.hull.integrity` (overall).
+
+### Logs
+
+Structured logs via ILogger + OpenTelemetry for every meaningful event: subsystem degradation, repairs, cascade failures, random events, and game over stats.
+
+## Project Structure
+
+```
+src/
+  SpaceStationMonitor/    # The game. Console app with OTel instrumentation.
+  OTelWizard/             # A standalone OTLP listener (reference/example code).
+tests/
+  SpaceStationMonitor.Tests/  # Unit tests for game mechanics.
+```
+
+## Building
+
+```bash
+# Build everything
+dotnet build
+
+# Run tests
+dotnet test
+
+# Publish a portable executable (pick your platform)
+dotnet publish src/SpaceStationMonitor -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish src/SpaceStationMonitor -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish src/SpaceStationMonitor -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
+```
+
+## License
+
+[MIT](LICENSE)
