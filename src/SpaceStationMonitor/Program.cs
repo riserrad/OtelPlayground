@@ -252,7 +252,7 @@ try
             display.SetEvent(null);
         }
 
-        Telemetry.CyclesTotal.Add(1);
+        Telemetry.CyclesTotal.Add(strategy.CycleCounterIncrement());
         cycleActivity?.SetTag("hull.integrity", Math.Round(station.HullIntegrity, 1));
 
         logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
