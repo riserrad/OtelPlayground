@@ -1,5 +1,9 @@
 namespace SpaceStationMonitor.BugStrategies;
 
+/// <summary>
+/// One bug strategy is picked at random per game run from <see cref="BugStrategyCatalog"/>.
+/// Override the random pick with the BUG_STRATEGY env var; seed it with BUG_STRATEGY_SEED.
+/// </summary>
 public interface IBugStrategy
 {
     string Name { get; }

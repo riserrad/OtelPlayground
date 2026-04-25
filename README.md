@@ -46,6 +46,13 @@ You get 3 emergency power charges. Use them wisely.
 
 **Here's the thing:** something in the station isn't working the way it should. The game won't tell you what it is. But the telemetry will. Can you figure out what's going wrong by looking at the traces and metrics in the Aspire Dashboard?
 
+One of six bug strategies is picked at random when the game starts (`LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`). The startup log shows which one and which subsystem it's targeting. If you want to control it:
+
+- `BUG_STRATEGY=<name>` forces a specific strategy (case-insensitive). An unknown name exits with code 2 and prints the valid names to stderr.
+- `BUG_STRATEGY_SEED=<int>` seeds the RNG so the same seed reproduces the same `(target, strategy)` pair. Only used when `BUG_STRATEGY` is unset.
+
+When you're ready to investigate, walk through [docs/bug-catalog-debugging.md](docs/bug-catalog-debugging.md). It's a question-driven cheat sheet that teaches the metrics → traces → logs triage motion without giving away the answer.
+
 ## What Telemetry Gets Emitted
 
 This is where the learning happens. The game emits telemetry using the [OpenTelemetry SDK for .NET](https://opentelemetry.io/docs/languages/dotnet/), exported via [OTLP](https://opentelemetry.io/docs/specs/otlp/) (the standard protocol for shipping observability data).
@@ -62,7 +69,7 @@ Each game cycle creates a parent span with child spans for individual operations
 
 ### Metrics
 
-The game tracks a handful of counters: `station.repairs.total`, `station.repairs.failed`, `station.cascade.failures`, `station.events.total`, and `station.cycles.total`. These count what you'd expect from the names.
+The game tracks a handful of counters: `station.repairs.total`, `station.repairs.failed`, `station.repairs.denied`, `station.cascade.failures`, `station.events.total`, and `station.cycles.total`. These count what you'd expect from the names.
 
 There's also a histogram (`station.repair.effectiveness`) that records how much of each repair actually got applied vs. what was requested. A healthy repair scores 100%. If you see numbers below that... well, that's a clue.
 
