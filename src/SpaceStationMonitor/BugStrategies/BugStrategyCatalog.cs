@@ -11,4 +11,14 @@ public static class BugStrategyCatalog
         new WrongTargetDegradationStrategy(bugTarget),
         new RetryStormStrategy(bugTarget),
     ];
+
+    public static IBugStrategy? FindByName(IEnumerable<IBugStrategy> strategies, string name)
+    {
+        foreach (var s in strategies)
+        {
+            if (string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+                return s;
+        }
+        return null;
+    }
 }

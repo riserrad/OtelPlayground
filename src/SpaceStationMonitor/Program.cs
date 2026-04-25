@@ -55,7 +55,23 @@ var station = new Station();
 var random = new Random();
 var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
 var strategies = BugStrategyCatalog.All(bugTarget);
-var strategy = strategies[random.Next(strategies.Length)];
+
+IBugStrategy strategy;
+var forcedStrategyName = Environment.GetEnvironmentVariable("BUG_STRATEGY");
+if (!string.IsNullOrWhiteSpace(forcedStrategyName))
+{
+    strategy = BugStrategyCatalog.FindByName(strategies, forcedStrategyName)
+        ?? throw new InvalidOperationException(
+            $"Unknown BUG_STRATEGY '{forcedStrategyName}'. Valid names: "
+            + string.Join(", ", strategies.Select(s => s.Name)));
+}
+else
+{
+    var seedEnv = Environment.GetEnvironmentVariable("BUG_STRATEGY_SEED");
+    var picker = int.TryParse(seedEnv, out var seed) ? new Random(seed) : random;
+    strategy = strategies[picker.Next(strategies.Length)];
+}
+
 var repairSystem = new RepairSystem(strategy);
 var eventEngine = new EventEngine();
 var cascadeEngine = new CascadeEngine(strategy);
@@ -318,7 +334,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
 
     try
     {
-        var result = repairSystem.Repair(sub, requested);
+        var result = repairSystem.Repair(sub, requested, station.TryConsumeRepair);
 
         repairActivity?.SetTag("subsystem.name", result.SubsystemName);
         repairActivity?.SetTag("repair.requested", result.Requested);

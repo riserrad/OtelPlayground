@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using SpaceStationMonitor.BugStrategies;
 
 namespace SpaceStationMonitor;
@@ -17,7 +18,10 @@ public class RepairSystem
     public bool IsBugActive => _strategy.IsBugActive;
     public string BugStrategyName => _strategy.Name;
 
-    public RepairResult Repair(Subsystem subsystem, int requested)
+    // tryConsumeQuota is called before each RETRY (not the original attempt, which
+    // is gated upstream by HandleRepair). When it returns false the retry loop
+    // bails with repairs.denied++ and the caught exception propagates.
+    public RepairResult Repair(Subsystem subsystem, int requested, Func<bool>? tryConsumeQuota = null)
     {
         var delay = _strategy.RepairDelay(subsystem);
         if (delay.HasValue && delay.Value > TimeSpan.Zero)
@@ -36,15 +40,28 @@ public class RepairSystem
             try
             {
                 applied = _strategy.OnRepair(subsystem, requested, ref retryCount);
+                EmitAttemptEvent(retryCount + 1, "success");
                 break;
             }
             catch
             {
+                EmitAttemptEvent(retryCount + 1, "failure");
+
                 if (!_strategy.ShouldRetryAfterFailure(subsystem, retryCount))
                 {
                     Telemetry.RepairsFailed.Add(1, subsystemTag);
                     throw;
                 }
+
+                // About to retry — quota, if wired, has to cover this new attempt.
+                if (tryConsumeQuota != null && !tryConsumeQuota())
+                {
+                    EmitAttemptEvent(retryCount + 2, "denied");
+                    Telemetry.RepairsDenied.Add(1, subsystemTag);
+                    Telemetry.RepairsFailed.Add(1, subsystemTag);
+                    throw;
+                }
+
                 retryCount++;
             }
         }
@@ -68,6 +85,17 @@ public class RepairSystem
     }
 
     public int GetRepairAmount() => _random.Next(15, 26);
+
+    private static void EmitAttemptEvent(int attemptNumber, string outcome)
+    {
+        Activity.Current?.AddEvent(new ActivityEvent(
+            "repair.attempt",
+            tags: new ActivityTagsCollection
+            {
+                { "attempt.number", attemptNumber },
+                { "attempt.outcome", outcome },
+            }));
+    }
 }
 
 public record RepairResult(
