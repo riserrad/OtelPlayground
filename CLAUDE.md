@@ -53,6 +53,7 @@ Don't unify these unintentionally — SpaceStationMonitor was bumped to 10 delib
   - `GameDisplay.cs` - Console rendering with health bars, warnings, event messages
   - `Telemetry.cs` - Static OTel primitives: ActivitySource, Meter, 5 counters, 1 histogram
   - `GeneralSpaceStationException.cs` - Custom exception for repair system failures
+  - `BugStrategies/` - 6 swappable bug strategies (LeakyRepair, LatencyInjection, SilentCounterCorruption, StickyCascadeMultiplier, WrongTargetDegradation, RetryStorm); one picked at random per run, exposed as `bug.strategy` resource attribute and initial tag on `StationCycle` so Sprint 003 samplers can see it.
 
 - **src/OTelWizard/** - A standalone OTLP gRPC listener (reference code, not the primary way to view telemetry).
   - `Services/TraceService.cs`, `MetricsService.cs`, `LogsService.cs` - gRPC handlers
