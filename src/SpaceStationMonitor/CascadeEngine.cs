@@ -1,3 +1,5 @@
+using SpaceStationMonitor.BugStrategies;
+
 namespace SpaceStationMonitor;
 
 public record CascadeResult(
@@ -8,14 +10,23 @@ public record CascadeResult(
 
 public class CascadeEngine
 {
+    private readonly IBugStrategy _strategy;
+
+    public CascadeEngine(IBugStrategy strategy)
+    {
+        _strategy = strategy;
+    }
+
     public List<CascadeResult> CheckAndApplyCascades(Station station, bool isBugActive)
     {
         var results = new List<CascadeResult>();
         double increment = isBugActive ? 0.8 : 0.5;
 
-        // Reset all cascade multipliers
-        foreach (var sub in station.Subsystems)
-            sub.CascadeMultiplier = 1.0;
+        if (_strategy.ShouldResetCascadeMultipliers())
+        {
+            foreach (var sub in station.Subsystems)
+                sub.CascadeMultiplier = 1.0;
+        }
 
         foreach (var sub in station.Subsystems)
         {

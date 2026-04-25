@@ -1,4 +1,5 @@
 using SpaceStationMonitor;
+using SpaceStationMonitor.Tests.TestHelpers;
 using Xunit;
 
 namespace SpaceStationMonitor.Tests;
@@ -9,7 +10,7 @@ public class CascadeEngineTests
     public void CheckCascades_NoCriticalSystems_NoCascades()
     {
         var station = new Station();
-        var engine = new CascadeEngine();
+        var engine = new CascadeEngine(new NoOpBugStrategy());
 
         var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
@@ -23,7 +24,7 @@ public class CascadeEngineTests
     {
         var station = new Station();
         station.Subsystems[0].Health = 20; // Oxygen goes critical
-        var engine = new CascadeEngine();
+        var engine = new CascadeEngine(new NoOpBugStrategy());
 
         var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
@@ -45,7 +46,7 @@ public class CascadeEngineTests
         var station = new Station();
         station.Subsystems[0].Health = 20; // Oxygen critical
         station.Subsystems[2].Health = 15; // Shields critical
-        var engine = new CascadeEngine();
+        var engine = new CascadeEngine(new NoOpBugStrategy());
 
         var results = engine.CheckAndApplyCascades(station, isBugActive: false);
 
