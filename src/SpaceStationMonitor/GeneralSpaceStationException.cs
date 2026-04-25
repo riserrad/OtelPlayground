@@ -1,7 +1,7 @@
 namespace SpaceStationMonitor;
 
 [Serializable]
-internal class GeneralSpaceStationException : Exception
+public class GeneralSpaceStationException : Exception
 {
     public GeneralSpaceStationException()
     {

@@ -51,8 +51,9 @@ Don't unify these unintentionally — SpaceStationMonitor was bumped to 10 delib
   - `CascadeEngine.cs` - Cascade failure detection: subsystems below 30% health increase degradation on others
   - `EventEngine.cs` - Random events (solar flare, micrometeorite, power surge) with severity levels
   - `GameDisplay.cs` - Console rendering with health bars, warnings, event messages
-  - `Telemetry.cs` - Static OTel primitives: ActivitySource, Meter, 5 counters, 1 histogram
+  - `Telemetry.cs` - Static OTel primitives: ActivitySource, Meter, 6 counters, 1 histogram
   - `GeneralSpaceStationException.cs` - Custom exception for repair system failures
+  - `BugStrategies/` - 6 swappable bug strategies (LeakyRepair, LatencyInjection, SilentCounterCorruption, StickyCascadeMultiplier, WrongTargetDegradation, RetryStorm); one picked at random per run, exposed as `bug.strategy` resource attribute and initial tag on `StationCycle` so Sprint 003 samplers can see it.
 
 - **src/OTelWizard/** - A standalone OTLP gRPC listener (reference code, not the primary way to view telemetry).
   - `Services/TraceService.cs`, `MetricsService.cs`, `LogsService.cs` - gRPC handlers
@@ -73,7 +74,7 @@ StationCycle (root)
 
 - **Service name:** `SpaceStationMonitor`
 - **Traces:** `StationCycle` (parent span per cycle), `SubsystemTick` (per subsystem), `RepairAction`, `CascadeCheck`, `StationEvent`
-- **Counters:** `station.repairs.total`, `station.repairs.failed`, `station.cascade.failures`, `station.events.total`, `station.cycles.total`
+- **Counters:** `station.repairs.total`, `station.repairs.failed`, `station.repairs.denied`, `station.cascade.failures`, `station.events.total`, `station.cycles.total`
 - **Histogram:** `station.repair.effectiveness` (percent, repair applied vs. requested)
 - **Gauges:** `station.subsystem.health` (per subsystem), `station.hull.integrity` (overall)
 - **Logs:** Structured logs via ILogger+OTel for degradation, repairs, cascades, events, game over

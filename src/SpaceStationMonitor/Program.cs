@@ -7,36 +7,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using SpaceStationMonitor;
-
-// ── OTel setup ──────────────────────────────────────────────────────────────
-var resourceBuilder = ResourceBuilder.CreateDefault()
-    .AddService(Telemetry.ServiceName);
-
-using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-    .SetResourceBuilder(resourceBuilder)
-    .AddSource(Telemetry.ActivitySourceName)
-    .AddOtlpExporter()
-    .Build();
-
-using var meterProvider = Sdk.CreateMeterProviderBuilder()
-    .SetResourceBuilder(resourceBuilder)
-    .AddMeter(Telemetry.MeterName)
-    .AddOtlpExporter()
-    .Build();
-
-using var loggerFactory = LoggerFactory.Create(builder =>
-{
-    builder.SetMinimumLevel(LogLevel.Information);
-    builder.AddOpenTelemetry(logging =>
-    {
-        logging.SetResourceBuilder(resourceBuilder);
-        logging.IncludeFormattedMessage = true;
-        logging.IncludeScopes = true;
-        logging.AddOtlpExporter();
-    });
-});
-
-var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
+using SpaceStationMonitor.BugStrategies;
 
 // ── Splash gate ─────────────────────────────────────────────────────────────
 using var shutdownCts = new CancellationTokenSource();
@@ -78,16 +49,66 @@ if (quitFromSplash || shutdownCts.IsCancellationRequested)
     return;
 }
 
-// ── Game components — clocks (Station.StartTime, RepairSystem._startTime)
+// ── Game components — clocks (Station.StartTime, strategy start time)
 //    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
 var station = new Station();
 var random = new Random();
-var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
-var repairSystem = new RepairSystem(bugTarget);
+var subsystemNames = station.Subsystems.Select(s => s.Name).ToArray();
+
+string bugTarget;
+IBugStrategy strategy;
+try
+{
+    (bugTarget, strategy) = BugSelector.Select(Environment.GetEnvironmentVariable, subsystemNames);
+}
+catch (InvalidOperationException ex)
+{
+    // Narrow catch — the only InvalidOperationException BugSelector throws is
+    // the unknown-BUG_STRATEGY one. Exit 2 so scripts can distinguish from
+    // normal game exit (0) and a crash (nonzero other than 2).
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(2);
+    return;
+}
+
+var repairSystem = new RepairSystem(strategy);
 var eventEngine = new EventEngine();
-var cascadeEngine = new CascadeEngine();
+var cascadeEngine = new CascadeEngine(strategy);
 var display = new GameDisplay();
 int selectedSubsystem = 0;
+
+// ── OTel setup ──────────────────────────────────────────────────────────────
+// bug.strategy goes on the resource so it's filterable across all signals
+// (traces, metrics, logs) — not just on the StationCycle span.
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService(Telemetry.ServiceName)
+    .AddAttributes(new[] { new KeyValuePair<string, object>("bug.strategy", strategy.Name) });
+
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+    .SetResourceBuilder(resourceBuilder)
+    .AddSource(Telemetry.ActivitySourceName)
+    .AddOtlpExporter()
+    .Build();
+
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
+    .SetResourceBuilder(resourceBuilder)
+    .AddMeter(Telemetry.MeterName)
+    .AddOtlpExporter()
+    .Build();
+
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder.SetMinimumLevel(LogLevel.Information);
+    builder.AddOpenTelemetry(logging =>
+    {
+        logging.SetResourceBuilder(resourceBuilder);
+        logging.IncludeFormattedMessage = true;
+        logging.IncludeScopes = true;
+        logging.AddOtlpExporter();
+    });
+});
+
+var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
 
 // ── Register gauge metrics (need Station reference) ─────────────────────────
 Telemetry.Meter.CreateObservableGauge("station.subsystem.health",
@@ -100,8 +121,8 @@ Telemetry.Meter.CreateObservableGauge<double>("station.hull.integrity",
     () => new Measurement<double>(station.HullIntegrity),
     "percent", "Overall station hull integrity");
 
-logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
-    repairSystem.BugTargetSubsystem);
+logger.LogInformation("Bug strategy: {Name}, target: {Target}",
+    strategy.Name, strategy.BugTargetSubsystem);
 
 // Show the pristine station before the first cycle degrades it.
 display.Render(station);
@@ -162,9 +183,18 @@ try
         // Snapshot bug state once per cycle so all phases of the tick see the same value.
         bool isBugActive = repairSystem.IsBugActive;
 
-        using var cycleActivity = Telemetry.ActivitySource.StartActivity("StationCycle");
-        cycleActivity?.SetTag("cycle.number", station.CycleCount + 1);
-        cycleActivity?.SetTag("bug.active", isBugActive);
+        // bug.strategy, bug.active, cycle.number are initial tags so samplers
+        // (Sprint 003) can make decisions before the span is recorded.
+        using var cycleActivity = Telemetry.ActivitySource.StartActivity(
+            "StationCycle",
+            ActivityKind.Internal,
+            parentContext: default,
+            tags: new KeyValuePair<string, object?>[]
+            {
+                new("bug.strategy", strategy.Name),
+                new("bug.active", isBugActive),
+                new("cycle.number", station.CycleCount + 1),
+            });
 
         station.StartNewCycle(isBugActive);
 
@@ -172,18 +202,19 @@ try
         foreach (var sub in station.Subsystems)
         {
             using var tickActivity = Telemetry.ActivitySource.StartActivity("SubsystemTick");
-            var healthBefore = sub.Health;
+            var actualTarget = strategy.RedirectDegradationTarget(sub, station.Subsystems);
+            var healthBefore = actualTarget.Health;
 
-            station.DegradeSubsystem(sub);
+            station.DegradeSubsystem(actualTarget);
 
-            tickActivity?.SetTag("subsystem.name", sub.Name);
+            tickActivity?.SetTag("subsystem.name", actualTarget.Name);
             tickActivity?.SetTag("health.before", Math.Round(healthBefore, 1));
-            tickActivity?.SetTag("health.after", Math.Round(sub.Health, 1));
+            tickActivity?.SetTag("health.after", Math.Round(actualTarget.Health, 1));
             tickActivity?.SetTag("degradation.rate",
-                Math.Round(sub.BaseDegradationRate * sub.CascadeMultiplier, 2));
+                Math.Round(actualTarget.BaseDegradationRate * actualTarget.CascadeMultiplier, 2));
 
-            logger.LogInformation("Subsystem {Name}: {Before:F1}% \u2192 {After:F1}%",
-                sub.Name, healthBefore, sub.Health);
+            logger.LogInformation("Subsystem {Name}: {Before:F1}% → {After:F1}%",
+                actualTarget.Name, healthBefore, actualTarget.Health);
         }
 
         // ── Cascade check ──
@@ -207,7 +238,7 @@ try
                 new KeyValuePair<string, object?>("affected.subsystem",
                     string.Join(",", cascade.AffectedSubsystems)));
 
-            logger.LogError("Cascade failure: {Source} \u2192 {Affected}",
+            logger.LogError("Cascade failure: {Source} → {Affected}",
                 cascade.SourceSubsystem, string.Join(", ", cascade.AffectedSubsystems));
         }
 
@@ -237,10 +268,10 @@ try
             display.SetEvent(null);
         }
 
-        Telemetry.CyclesTotal.Add(1);
+        Telemetry.CyclesTotal.Add(strategy.CycleCounterIncrement());
         cycleActivity?.SetTag("hull.integrity", Math.Round(station.HullIntegrity, 1));
 
-        logger.LogInformation("Station cycle {Cycle} complete \u2014 hull integrity {Hull:F1}%",
+        logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
             station.CycleCount, station.HullIntegrity);
 
         // ── Render display (shown during next iteration's wait) ──
@@ -272,7 +303,7 @@ Console.WriteLine($"  Cycles survived: {station.CycleCount}");
 Console.WriteLine($"  Final hull integrity: {station.HullIntegrity:F1}%");
 Console.ResetColor();
 
-logger.LogInformation("Game over \u2014 Cycles: {Cycles}, Hull: {Hull:F1}%",
+logger.LogInformation("Game over — Cycles: {Cycles}, Hull: {Hull:F1}%",
     station.CycleCount, station.HullIntegrity);
 
 // `using var` handles tracer/meter/logger provider disposal.
@@ -302,15 +333,15 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
 
     try
     {
-        var result = repairSystem.Repair(sub, requested);
+        var result = repairSystem.Repair(sub, requested, station.TryConsumeRepair);
 
         repairActivity?.SetTag("subsystem.name", result.SubsystemName);
         repairActivity?.SetTag("repair.requested", result.Requested);
         repairActivity?.SetTag("repair.applied", result.Applied);
         repairActivity?.SetTag("repair.healthy", result.IsHealthy);
 
-        Telemetry.RepairsTotal.Add(1,
-            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+        // RepairsTotal is incremented inside RepairSystem per attempt so retries
+        // show up as inflated totals (the RetryStorm counter-ratio bug).
 
         double effectiveness = result.Requested > 0
             ? (double)result.Applied / result.Requested * 100.0
@@ -332,7 +363,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
         }
         else
         {
-            logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
+            logger.LogInformation("Repair applied to {Name}: {Before:F1}% → {After:F1}%",
                 result.SubsystemName, result.HealthBefore, result.HealthAfter);
         }
 
@@ -344,8 +375,8 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
         repairActivity?.AddException(ex);
         repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
 
-        Telemetry.RepairsFailed.Add(1,
-                        new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+        // RepairsFailed is incremented inside RepairSystem exactly once per
+        // original failure (retries do not add to it).
 
         logger.LogError(ex, "Repair failed on {Name}: requested {Requested}%",
                         sub.Name, requested);
@@ -353,7 +384,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
 
     // Display shows the lie - simulating accidental exception swallow in the repair system that hides the critical failure from the player.
     display.SetRepairMessage(
-            $"Repaired {sub.Name}: {currentHealth:F0}% \u2192 {expectedHealth:F0}%");
+            $"Repaired {sub.Name}: {currentHealth:F0}% → {expectedHealth:F0}%");
     display.Render(station);
 }
 
