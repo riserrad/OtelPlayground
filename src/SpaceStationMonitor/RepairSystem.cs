@@ -25,8 +25,14 @@ public class RepairSystem
 
         int retryCount = 0;
         int applied;
+        var subsystemTag = new KeyValuePair<string, object?>("subsystem.name", subsystem.Name);
+
         while (true)
         {
+            // Counted per attempt on purpose: retries inflate this counter against
+            // the single user-initiated repair below (the RetryStorm counter-ratio bug).
+            Telemetry.RepairsTotal.Add(1, subsystemTag);
+
             try
             {
                 applied = _strategy.OnRepair(subsystem, requested, ref retryCount);
@@ -35,7 +41,10 @@ public class RepairSystem
             catch
             {
                 if (!_strategy.ShouldRetryAfterFailure(subsystem, retryCount))
+                {
+                    Telemetry.RepairsFailed.Add(1, subsystemTag);
                     throw;
+                }
                 retryCount++;
             }
         }

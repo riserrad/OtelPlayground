@@ -325,8 +325,8 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
         repairActivity?.SetTag("repair.applied", result.Applied);
         repairActivity?.SetTag("repair.healthy", result.IsHealthy);
 
-        Telemetry.RepairsTotal.Add(1,
-            new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+        // RepairsTotal is incremented inside RepairSystem per attempt so retries
+        // show up as inflated totals (the RetryStorm counter-ratio bug).
 
         double effectiveness = result.Requested > 0
             ? (double)result.Applied / result.Requested * 100.0
@@ -360,8 +360,8 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
         repairActivity?.AddException(ex);
         repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
 
-        Telemetry.RepairsFailed.Add(1,
-                        new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+        // RepairsFailed is incremented inside RepairSystem exactly once per
+        // original failure (retries do not add to it).
 
         logger.LogError(ex, "Repair failed on {Name}: requested {Requested}%",
                         sub.Name, requested);
