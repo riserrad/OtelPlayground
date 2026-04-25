@@ -6,4 +6,6 @@ public class StickyCascadeMultiplierStrategy : BugStrategyBase
         : base(bugTargetSubsystem, activationDelay) { }
 
     public override string Name => "StickyCascadeMultiplier";
+
+    public override bool ShouldResetCascadeMultipliers() => !IsBugActive;
 }

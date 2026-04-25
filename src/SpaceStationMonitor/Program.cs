@@ -58,7 +58,7 @@ var strategies = BugStrategyCatalog.All(bugTarget);
 var strategy = strategies[random.Next(strategies.Length)];
 var repairSystem = new RepairSystem(strategy);
 var eventEngine = new EventEngine();
-var cascadeEngine = new CascadeEngine();
+var cascadeEngine = new CascadeEngine(strategy);
 var display = new GameDisplay();
 int selectedSubsystem = 0;
 
@@ -187,18 +187,19 @@ try
         foreach (var sub in station.Subsystems)
         {
             using var tickActivity = Telemetry.ActivitySource.StartActivity("SubsystemTick");
-            var healthBefore = sub.Health;
+            var actualTarget = strategy.RedirectDegradationTarget(sub, station.Subsystems);
+            var healthBefore = actualTarget.Health;
 
-            station.DegradeSubsystem(sub);
+            station.DegradeSubsystem(actualTarget);
 
-            tickActivity?.SetTag("subsystem.name", sub.Name);
+            tickActivity?.SetTag("subsystem.name", actualTarget.Name);
             tickActivity?.SetTag("health.before", Math.Round(healthBefore, 1));
-            tickActivity?.SetTag("health.after", Math.Round(sub.Health, 1));
+            tickActivity?.SetTag("health.after", Math.Round(actualTarget.Health, 1));
             tickActivity?.SetTag("degradation.rate",
-                Math.Round(sub.BaseDegradationRate * sub.CascadeMultiplier, 2));
+                Math.Round(actualTarget.BaseDegradationRate * actualTarget.CascadeMultiplier, 2));
 
             logger.LogInformation("Subsystem {Name}: {Before:F1}% → {After:F1}%",
-                sub.Name, healthBefore, sub.Health);
+                actualTarget.Name, healthBefore, actualTarget.Health);
         }
 
         // ── Cascade check ──
