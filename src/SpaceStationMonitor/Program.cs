@@ -53,23 +53,22 @@ if (quitFromSplash || shutdownCts.IsCancellationRequested)
 //    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
 var station = new Station();
 var random = new Random();
-var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
-var strategies = BugStrategyCatalog.All(bugTarget);
+var subsystemNames = station.Subsystems.Select(s => s.Name).ToArray();
 
+string bugTarget;
 IBugStrategy strategy;
-var forcedStrategyName = Environment.GetEnvironmentVariable("BUG_STRATEGY");
-if (!string.IsNullOrWhiteSpace(forcedStrategyName))
+try
 {
-    strategy = BugStrategyCatalog.FindByName(strategies, forcedStrategyName)
-        ?? throw new InvalidOperationException(
-            $"Unknown BUG_STRATEGY '{forcedStrategyName}'. Valid names: "
-            + string.Join(", ", strategies.Select(s => s.Name)));
+    (bugTarget, strategy) = BugSelector.Select(Environment.GetEnvironmentVariable, subsystemNames);
 }
-else
+catch (InvalidOperationException ex)
 {
-    var seedEnv = Environment.GetEnvironmentVariable("BUG_STRATEGY_SEED");
-    var picker = int.TryParse(seedEnv, out var seed) ? new Random(seed) : random;
-    strategy = strategies[picker.Next(strategies.Length)];
+    // Narrow catch — the only InvalidOperationException BugSelector throws is
+    // the unknown-BUG_STRATEGY one. Exit 2 so scripts can distinguish from
+    // normal game exit (0) and a crash (nonzero other than 2).
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(2);
+    return;
 }
 
 var repairSystem = new RepairSystem(strategy);
