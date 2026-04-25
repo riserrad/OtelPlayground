@@ -1,15 +1,19 @@
 using SpaceStationMonitor;
+using SpaceStationMonitor.BugStrategies;
 using Xunit;
 
 namespace SpaceStationMonitor.Tests;
 
 public class RepairSystemTests
 {
+    private static RepairSystem WithLeakyRepair(string target, TimeSpan? activationDelay = null) =>
+        new(new LeakyRepairStrategy(target, activationDelay));
+
     [Fact]
     public void Repair_WhenBugNotActive_AppliesFullAmount()
     {
         // Bug delay far in future — bug will not be active
-        var repair = new RepairSystem("Oxygen", bugActivationDelay: TimeSpan.FromHours(1));
+        var repair = WithLeakyRepair("Oxygen", TimeSpan.FromHours(1));
         var sub = new Subsystem("Oxygen", 1.0);
         sub.Health = 50;
 
@@ -25,7 +29,7 @@ public class RepairSystemTests
     public void Repair_WhenBugActive_AppliesReducedAmount()
     {
         // Bug activates immediately
-        var repair = new RepairSystem("Oxygen", bugActivationDelay: TimeSpan.Zero);
+        var repair = WithLeakyRepair("Oxygen", TimeSpan.Zero);
         var sub = new Subsystem("Oxygen", 1.0);
         sub.Health = 50;
 
@@ -39,7 +43,7 @@ public class RepairSystemTests
     [Fact]
     public void Repair_WhenBugActive_OnlyAffectsTargetSubsystem()
     {
-        var repair = new RepairSystem("Oxygen", bugActivationDelay: TimeSpan.Zero);
+        var repair = WithLeakyRepair("Oxygen", TimeSpan.Zero);
         var power = new Subsystem("Power", 1.0);
         power.Health = 50;
 
@@ -52,7 +56,7 @@ public class RepairSystemTests
     [Fact]
     public void Repair_DisplayedAfter_ShowsExpectedValue()
     {
-        var repair = new RepairSystem("Oxygen", bugActivationDelay: TimeSpan.Zero);
+        var repair = WithLeakyRepair("Oxygen", TimeSpan.Zero);
         var sub = new Subsystem("Oxygen", 1.0);
         sub.Health = 50;
 
@@ -67,7 +71,7 @@ public class RepairSystemTests
     [Fact]
     public void Repair_CapsHealthAt100()
     {
-        var repair = new RepairSystem("Oxygen", bugActivationDelay: TimeSpan.FromHours(1));
+        var repair = WithLeakyRepair("Oxygen", TimeSpan.FromHours(1));
         var sub = new Subsystem("Oxygen", 1.0);
         sub.Health = 95;
 
@@ -79,7 +83,7 @@ public class RepairSystemTests
     [Fact]
     public void GetRepairAmount_ReturnsBetween15And25()
     {
-        var repair = new RepairSystem("Oxygen");
+        var repair = WithLeakyRepair("Oxygen");
 
         for (int i = 0; i < 100; i++)
         {

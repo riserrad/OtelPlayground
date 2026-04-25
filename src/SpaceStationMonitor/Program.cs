@@ -7,36 +7,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using SpaceStationMonitor;
-
-// ── OTel setup ──────────────────────────────────────────────────────────────
-var resourceBuilder = ResourceBuilder.CreateDefault()
-    .AddService(Telemetry.ServiceName);
-
-using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-    .SetResourceBuilder(resourceBuilder)
-    .AddSource(Telemetry.ActivitySourceName)
-    .AddOtlpExporter()
-    .Build();
-
-using var meterProvider = Sdk.CreateMeterProviderBuilder()
-    .SetResourceBuilder(resourceBuilder)
-    .AddMeter(Telemetry.MeterName)
-    .AddOtlpExporter()
-    .Build();
-
-using var loggerFactory = LoggerFactory.Create(builder =>
-{
-    builder.SetMinimumLevel(LogLevel.Information);
-    builder.AddOpenTelemetry(logging =>
-    {
-        logging.SetResourceBuilder(resourceBuilder);
-        logging.IncludeFormattedMessage = true;
-        logging.IncludeScopes = true;
-        logging.AddOtlpExporter();
-    });
-});
-
-var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
+using SpaceStationMonitor.BugStrategies;
 
 // ── Splash gate ─────────────────────────────────────────────────────────────
 using var shutdownCts = new CancellationTokenSource();
@@ -78,16 +49,51 @@ if (quitFromSplash || shutdownCts.IsCancellationRequested)
     return;
 }
 
-// ── Game components — clocks (Station.StartTime, RepairSystem._startTime)
+// ── Game components — clocks (Station.StartTime, strategy start time)
 //    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
 var station = new Station();
 var random = new Random();
 var bugTarget = station.Subsystems[random.Next(station.Subsystems.Length)].Name;
-var repairSystem = new RepairSystem(bugTarget);
+var strategies = BugStrategyCatalog.All(bugTarget);
+var strategy = strategies[random.Next(strategies.Length)];
+var repairSystem = new RepairSystem(strategy);
 var eventEngine = new EventEngine();
 var cascadeEngine = new CascadeEngine();
 var display = new GameDisplay();
 int selectedSubsystem = 0;
+
+// ── OTel setup ──────────────────────────────────────────────────────────────
+// bug.strategy goes on the resource so it's filterable across all signals
+// (traces, metrics, logs) — not just on the StationCycle span.
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService(Telemetry.ServiceName)
+    .AddAttributes(new[] { new KeyValuePair<string, object>("bug.strategy", strategy.Name) });
+
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+    .SetResourceBuilder(resourceBuilder)
+    .AddSource(Telemetry.ActivitySourceName)
+    .AddOtlpExporter()
+    .Build();
+
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
+    .SetResourceBuilder(resourceBuilder)
+    .AddMeter(Telemetry.MeterName)
+    .AddOtlpExporter()
+    .Build();
+
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder.SetMinimumLevel(LogLevel.Information);
+    builder.AddOpenTelemetry(logging =>
+    {
+        logging.SetResourceBuilder(resourceBuilder);
+        logging.IncludeFormattedMessage = true;
+        logging.IncludeScopes = true;
+        logging.AddOtlpExporter();
+    });
+});
+
+var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
 
 // ── Register gauge metrics (need Station reference) ─────────────────────────
 Telemetry.Meter.CreateObservableGauge("station.subsystem.health",
@@ -100,8 +106,8 @@ Telemetry.Meter.CreateObservableGauge<double>("station.hull.integrity",
     () => new Measurement<double>(station.HullIntegrity),
     "percent", "Overall station hull integrity");
 
-logger.LogInformation("Space Station Monitor started. Bug target: {Target} (activates after ~2 min)",
-    repairSystem.BugTargetSubsystem);
+logger.LogInformation("Bug strategy: {Name}, target: {Target}",
+    strategy.Name, strategy.BugTargetSubsystem);
 
 // Show the pristine station before the first cycle degrades it.
 display.Render(station);
@@ -162,9 +168,18 @@ try
         // Snapshot bug state once per cycle so all phases of the tick see the same value.
         bool isBugActive = repairSystem.IsBugActive;
 
-        using var cycleActivity = Telemetry.ActivitySource.StartActivity("StationCycle");
-        cycleActivity?.SetTag("cycle.number", station.CycleCount + 1);
-        cycleActivity?.SetTag("bug.active", isBugActive);
+        // bug.strategy, bug.active, cycle.number are initial tags so samplers
+        // (Sprint 003) can make decisions before the span is recorded.
+        using var cycleActivity = Telemetry.ActivitySource.StartActivity(
+            "StationCycle",
+            ActivityKind.Internal,
+            parentContext: default,
+            tags: new KeyValuePair<string, object?>[]
+            {
+                new("bug.strategy", strategy.Name),
+                new("bug.active", isBugActive),
+                new("cycle.number", station.CycleCount + 1),
+            });
 
         station.StartNewCycle(isBugActive);
 
@@ -182,7 +197,7 @@ try
             tickActivity?.SetTag("degradation.rate",
                 Math.Round(sub.BaseDegradationRate * sub.CascadeMultiplier, 2));
 
-            logger.LogInformation("Subsystem {Name}: {Before:F1}% \u2192 {After:F1}%",
+            logger.LogInformation("Subsystem {Name}: {Before:F1}% → {After:F1}%",
                 sub.Name, healthBefore, sub.Health);
         }
 
@@ -207,7 +222,7 @@ try
                 new KeyValuePair<string, object?>("affected.subsystem",
                     string.Join(",", cascade.AffectedSubsystems)));
 
-            logger.LogError("Cascade failure: {Source} \u2192 {Affected}",
+            logger.LogError("Cascade failure: {Source} → {Affected}",
                 cascade.SourceSubsystem, string.Join(", ", cascade.AffectedSubsystems));
         }
 
@@ -240,7 +255,7 @@ try
         Telemetry.CyclesTotal.Add(1);
         cycleActivity?.SetTag("hull.integrity", Math.Round(station.HullIntegrity, 1));
 
-        logger.LogInformation("Station cycle {Cycle} complete \u2014 hull integrity {Hull:F1}%",
+        logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
             station.CycleCount, station.HullIntegrity);
 
         // ── Render display (shown during next iteration's wait) ──
@@ -272,7 +287,7 @@ Console.WriteLine($"  Cycles survived: {station.CycleCount}");
 Console.WriteLine($"  Final hull integrity: {station.HullIntegrity:F1}%");
 Console.ResetColor();
 
-logger.LogInformation("Game over \u2014 Cycles: {Cycles}, Hull: {Hull:F1}%",
+logger.LogInformation("Game over — Cycles: {Cycles}, Hull: {Hull:F1}%",
     station.CycleCount, station.HullIntegrity);
 
 // `using var` handles tracer/meter/logger provider disposal.
@@ -332,7 +347,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
         }
         else
         {
-            logger.LogInformation("Repair applied to {Name}: {Before:F1}% \u2192 {After:F1}%",
+            logger.LogInformation("Repair applied to {Name}: {Before:F1}% → {After:F1}%",
                 result.SubsystemName, result.HealthBefore, result.HealthAfter);
         }
 
@@ -353,7 +368,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
 
     // Display shows the lie - simulating accidental exception swallow in the repair system that hides the critical failure from the player.
     display.SetRepairMessage(
-            $"Repaired {sub.Name}: {currentHealth:F0}% \u2192 {expectedHealth:F0}%");
+            $"Repaired {sub.Name}: {currentHealth:F0}% → {expectedHealth:F0}%");
     display.Render(station);
 }
 
