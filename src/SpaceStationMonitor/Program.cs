@@ -102,6 +102,7 @@ using var tracerProvider = Sdk.CreateTracerProviderBuilder()
 using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .SetResourceBuilder(resourceBuilder)
     .AddMeter(Telemetry.MeterName)
+    .SetExemplarFilter(ExemplarFilterType.TraceBased)
     .AddOtlpExporter()
     .Build();
 

@@ -109,3 +109,26 @@ Each section has the symptom you'll notice as a player, then a numbered walkthro
 5. Compare against `B2` — the hull-driven sampler should ramp up tracing on critical hull. Is it doing that, or is something pinning the rate low?
 
 *Teaches: head sampling makes its decision before the cascade tag exists, so it cannot bias toward errors. Counters and traces are independent — trace loss does not affect metric totals. This is the case for pairing head sampling with tail-based sampling and/or always-on error sampling in production.*
+
+
+---
+
+## Sampling — head vs tail, and where each lives
+
+The space station has two sampling stages:
+
+- **Head sampler** — runs at span start, before any tag is set. Sees the span name and the parent context, nothing else. Uses cheap inputs to make a fast decision: keep this one, drop this one. The hull-driven sampler in `B2` and the rules-based sampler in Expert mode are head samplers.
+- **Tail sampler** — runs after the trace has finished and every span has set its tags. Sees the whole trace at once and can keep traces that contain errors / cascades / failed repairs even if a head sampler would have dropped them. Hard mode wires in `TailSamplingProcessor` for this.
+
+A head sampler can never decide on a tag it has not seen yet. That is the whole reason `SamplingBlindSpot` works as a teaching beat — head sampling at a low rate cannot bias toward errors, because the error tag does not exist when the decision is made.
+
+**Where tail sampling lives in real production:** in the **OpenTelemetry Collector**, not in your application process. The collector runs as a sidecar or as a fleet-wide service, sees traces from every instance of every service, and can make consistent tail decisions across the whole fleet. The `TailSamplingProcessor` in this codebase is a single-process teaching simulation; it cannot make cross-process decisions and it holds buffered spans in memory of the game itself. **Do not carry the in-process pattern into a production service.** If you want tail sampling in production, run a collector with the `tail_sampling` processor configured.
+
+**Exemplars** are the bridge from a metric data point back to a representative trace. With `.SetExemplarFilter(ExemplarFilterType.TraceBased)` on the `MeterProviderBuilder`, the SDK attaches a TraceId to a small sample of measurements per histogram bucket. Click a slow bucket on `station.repair.effectiveness` in Aspire, follow the exemplar marker, land on a real trace. That closes the metric → trace investigation loop.
+
+1. Open Metrics. Find a histogram bucket that looks anomalous on `station.repair.effectiveness` (e.g. effectiveness < 50%).
+2. Click the bucket. The exemplar marker links to a TraceId — open it.
+3. The trace shows the actual `RepairAction` span where the bug fired. From there, the usual span-events / tags / linked logs walk applies.
+4. If exemplars are missing on a bucket you expected to find one in, check that the head sampler at game start was not `AlwaysOff` and that the trace was not dropped by tail sampling.
+
+*Teaches: head and tail sampling answer different questions. Exemplars are the metric → trace bridge that keeps a low sample rate from hiding the trace you actually want. Production tail sampling lives in the collector; the in-game implementation is a single-process simulation.*
