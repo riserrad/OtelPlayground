@@ -96,8 +96,7 @@ public class TestModeTests
         // its own linked child token, which does NOT propagate to the parent shutdown token, so
         // the cycle loop kept running. The fix routes Q through an upstream onQuit callback that
         // Program.cs wires to its real shutdownCts.Cancel().
-        // Pre-loaded so the very first PollInputAsync poll picks up the 'Q' deterministically —
-        // avoids a thread-safety / scheduling race between Task.Run and the polling loop.
+        // Q is pre-loaded so the very first PollInputAsync iteration picks it up deterministically.
         var keys = new Queue<char>(new[] { 'Q' });
         bool quitCalled = false;
         using var rootCts = new CancellationTokenSource();
@@ -121,13 +120,6 @@ public class TestModeTests
             },
             keyReader: () => keys.Count > 0 ? keys.Dequeue() : (char?)null);
 
-        // Push the Q press shortly after RunAsync starts polling.
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(50);
-            keys.Enqueue('Q');
-        });
-
         // Safety guard so a regression doesn't hang the test forever.
         using var safety = CancellationTokenSource.CreateLinkedTokenSource(rootCts.Token);
         safety.CancelAfter(TimeSpan.FromSeconds(3));
@@ -136,7 +128,7 @@ public class TestModeTests
 
         Assert.True(quitCalled, "onQuit callback should fire when 'Q' is read by the input loop");
         Assert.True(rootCts.IsCancellationRequested,
-            "root shutdown CTS should be cancelled by the Q handler — not just a child linked token");
+            "root shutdown CTS should be cancelled by the Q handler, not just a child linked token");
         Assert.Equal(0, station.CycleCount);
     }
 
