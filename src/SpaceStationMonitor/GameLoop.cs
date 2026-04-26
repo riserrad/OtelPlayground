@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry.Trace;
 using SpaceStationMonitor.Achievements;
 using SpaceStationMonitor.BugStrategies;
 using SpaceStationMonitor.Sampling;
@@ -95,6 +96,16 @@ public sealed class GameLoop
 
                 bool isBugActive = _repairSystem.IsBugActive;
 
+                // D2 sidecar (dev-design §0.5, Path 2). Idempotent per-cycle —
+                // the IsBugActive flip drives the override on, deactivation drives it off.
+                if (_sampler is not null)
+                {
+                    _sampler.OverrideSampler =
+                        _repairSystem.Strategy is SamplingBlindSpotStrategy && isBugActive
+                            ? new TraceIdRatioBasedSampler(0.05)
+                            : null;
+                }
+
                 using var cycleActivity = Telemetry.ActivitySource.StartActivity(
                     "StationCycle",
                     ActivityKind.Internal,
@@ -145,6 +156,12 @@ public sealed class GameLoop
                         new KeyValuePair<string, object?>("source.subsystem", cascade.SourceSubsystem),
                         new KeyValuePair<string, object?>("affected.subsystem",
                             string.Join(",", cascade.AffectedSubsystems)));
+
+                    _station.CascadeCount++;
+                    // IsAllDataRequested is the sampler decision, not a metric readback —
+                    // PM ratified this read for the SamplingBlindSpot reveal (dev-design §0.4).
+                    if (cascadeActivity != null && cascadeActivity.IsAllDataRequested)
+                        _station.CascadesTracedCount++;
 
                     _logger.LogError("Cascade failure: {Source} → {Affected}",
                         cascade.SourceSubsystem, string.Join(", ", cascade.AffectedSubsystems));

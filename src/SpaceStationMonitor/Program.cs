@@ -164,6 +164,7 @@ else
 }
 Console.WriteLine($"  Cycles survived: {station.CycleCount}");
 Console.WriteLine($"  Final hull integrity: {station.HullIntegrity:F1}%");
+Console.WriteLine($"  Cascade failures: {station.CascadeCount,-3}  |   Traces captured: {station.CascadesTracedCount,-3}");
 Console.WriteLine($"  Achievements: {achievementSystem.UnlockedNames.Count} — {string.Join(", ", achievementSystem.UnlockedNames)}");
 Console.ResetColor();
 
