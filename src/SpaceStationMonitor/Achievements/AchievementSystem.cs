@@ -3,6 +3,9 @@ using Microsoft.Extensions.Logging;
 
 namespace SpaceStationMonitor.Achievements;
 
+/// <summary>
+/// Tracks which achievements have unlocked during the current session and fires each at most once.
+/// </summary>
 public class AchievementSystem
 {
     private readonly HashSet<string> _unlocked = new();
@@ -44,8 +47,22 @@ public class AchievementSystem
         };
     }
 
+    /// <summary>
+    /// Names of achievements unlocked during the current session.
+    /// </summary>
     public IReadOnlyCollection<string> UnlockedNames => _unlocked;
 
+    /// <summary>
+    /// Evaluates each achievement against the given station state. Newly satisfied achievements are
+    /// marked unlocked, increment the <c>station.achievements.unlocked</c> counter, attach an
+    /// <c>AchievementUnlocked</c> span event to <paramref name="cycleSpan"/> when it is non-null,
+    /// push their name onto the display toast, and log at Information. Already-unlocked
+    /// achievements are skipped.
+    /// </summary>
+    /// <param name="station">Source of state for predicate evaluation.</param>
+    /// <param name="cycleSpan">Optional active span to receive the unlock event.</param>
+    /// <param name="logger">Logger for the unlock notification.</param>
+    /// <param name="display">Display surface that renders the achievement toast.</param>
     public void CheckAndFire(Station station, Activity? cycleSpan, ILogger logger, GameDisplay display)
     {
         foreach (var achievement in _achievements)
