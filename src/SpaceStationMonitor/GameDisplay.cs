@@ -14,7 +14,7 @@ public class GameDisplay
 
     public static void RenderStartScreen()
     {
-        Console.Clear();
+        ClearIfInteractive();
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
         Console.WriteLine("║          SPACE STATION MONITOR v1.0              ║");
@@ -30,7 +30,7 @@ public class GameDisplay
 
     public void Render(Station station)
     {
-        Console.Clear();
+        ClearIfInteractive();
         var uptime = DateTime.UtcNow - station.StartTime;
         var hullStr = $"{station.HullIntegrity:F0}%";
         var uptimeStr = $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
@@ -104,5 +104,14 @@ public class GameDisplay
     {
         var inner = content.Length > InnerWidth ? content[..InnerWidth] : content;
         Console.WriteLine($"║{inner}{new string(' ', InnerWidth - inner.Length)}║");
+    }
+
+    // Console.Clear() throws IOException when stdout is redirected (xUnit test runner).
+    // Skip the clear in that case so the game logic can be exercised in tests.
+    private static void ClearIfInteractive()
+    {
+        if (Console.IsOutputRedirected) return;
+        try { Console.Clear(); }
+        catch (IOException) { }
     }
 }
