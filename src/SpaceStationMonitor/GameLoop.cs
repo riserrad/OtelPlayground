@@ -5,6 +5,14 @@ using SpaceStationMonitor.BugStrategies;
 
 namespace SpaceStationMonitor;
 
+/// <summary>
+/// The per-cycle game loop, extracted from <c>Program.cs</c> top-level statements so it can
+/// be exercised in-process by tests (see <c>TestModeTests</c>) without spawning a subprocess.
+/// In normal play, <see cref="RunAsync"/> polls keyboard input and waits a randomised interval
+/// before each cycle. Under <see cref="TestModeConfig.TestMode"/> it skips input polling and
+/// uses <see cref="TestModeConfig.TickInterval"/> for the wait, exiting after
+/// <see cref="TestModeConfig.MaxCycles"/> cycles when set.
+/// </summary>
 public sealed class GameLoop
 {
     private readonly Station _station;
