@@ -37,6 +37,11 @@ public static class Telemetry
         Meter.CreateHistogram<double>("station.repair.effectiveness", "percent",
             description: "Ratio of repair applied vs requested (100 = healthy)");
 
+    // UpDownCounter
+    public static readonly UpDownCounter<long> AchievementsUnlocked =
+        Meter.CreateUpDownCounter<long>("station.achievements.unlocked",
+            description: "Net achievements unlocked this session");
+
     // Note: ObservableGauges (station.subsystem.health, station.hull.integrity)
     // are registered in Program.cs because they need a reference to the Station instance.
 }

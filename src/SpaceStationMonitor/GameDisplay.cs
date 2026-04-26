@@ -7,10 +7,12 @@ public class GameDisplay
     private string? _currentEvent;
     private string? _currentWarning;
     private string? _lastRepairMessage;
+    private string? _currentAchievement;
 
     public void SetEvent(string? message) => _currentEvent = message;
     public void SetWarning(string? message) => _currentWarning = message;
     public void SetRepairMessage(string? message) => _lastRepairMessage = message;
+    public void SetAchievement(string? message) => _currentAchievement = message;
 
     public static void RenderStartScreen()
     {
@@ -31,9 +33,7 @@ public class GameDisplay
     public void Render(Station station)
     {
         Console.Clear();
-        var uptime = DateTime.UtcNow - station.StartTime;
         var hullStr = $"{station.HullIntegrity:F0}%";
-        var uptimeStr = $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
@@ -79,6 +79,12 @@ public class GameDisplay
             WritePaddedLine($"  \u2604 {_currentEvent}");
             hasMessage = true;
         }
+        if (_currentAchievement != null)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            WritePaddedLine($"  \u2605 {_currentAchievement}");
+            hasMessage = true;
+        }
         if (_lastRepairMessage != null)
         {
             Console.ForegroundColor = ConsoleColor.Green;
@@ -95,7 +101,7 @@ public class GameDisplay
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
         WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
         WritePaddedLine($"  [Q] Quit   Emerg Pwr: {station.EmergencyPowerRemaining,-2} |  Repairs: {station.RepairsRemainingThisCycle,-2} left");
-        WritePaddedLine($"  Cycle: {station.CycleCount,-9}|  Uptime: {uptimeStr,-21}");
+        WritePaddedLine($"  Cycle: {station.CycleCount,-9}|  Score: {station.Score,-22}");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
     }

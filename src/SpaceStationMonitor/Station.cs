@@ -1,3 +1,7 @@
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("SpaceStationMonitor.Tests")]
+
 namespace SpaceStationMonitor;
 
 public class Subsystem
@@ -44,6 +48,17 @@ public class Station
     public int CycleCount { get; private set; }
     public DateTime StartTime { get; } = DateTime.UtcNow;
 
+    public int RepairsTotalThisSession { get; private set; }
+    public Queue<double> RecentRepairEffectiveness { get; } = new();
+    public int IronHullStreak { get; private set; }
+    public bool SolarFlareThisCycle { get; private set; }
+    public bool MinSubsystemStayedAbove30 { get; private set; }
+    public int CyclesAfterEmergencyExhausted { get; private set; }
+
+    public int CascadeCount { get; internal set; }
+
+    public int Score => 10 * CycleCount + 5 * RepairsTotalThisSession - 50 * CascadeCount;
+
     public double HullIntegrity =>
         Subsystems.Average(s => Math.Max(0, s.Health));
 
@@ -51,6 +66,12 @@ public class Station
     {
         CycleCount++;
         RepairsRemainingThisCycle = _repairsPerCycle;
+        SolarFlareThisCycle = false;
+
+        if (EmergencyPowerRemaining == 0)
+            CyclesAfterEmergencyExhausted++;
+        else
+            CyclesAfterEmergencyExhausted = 0;
 
         // Pre-bug: flat 1.0 (fun, winnable baseline).
         // Post-bug: step to 1.5x on activation, then +0.04 per cycle (compounding collapse).
@@ -63,6 +84,24 @@ public class Station
         {
             _difficultyMultiplier = 1.0;
         }
+    }
+
+    public void RecordRepair(double effectivenessPercent)
+    {
+        RepairsTotalThisSession++;
+        RecentRepairEffectiveness.Enqueue(effectivenessPercent);
+        while (RecentRepairEffectiveness.Count > 20)
+            RecentRepairEffectiveness.Dequeue();
+    }
+
+    public void RecordSolarFlare() => SolarFlareThisCycle = true;
+
+    public void EndCycle()
+    {
+        if (HullIntegrity >= 80) IronHullStreak++;
+        else IronHullStreak = 0;
+
+        MinSubsystemStayedAbove30 = Subsystems.All(s => s.Health >= 30);
     }
 
     public bool TryConsumeRepair()

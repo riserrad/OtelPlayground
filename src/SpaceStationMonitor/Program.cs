@@ -7,6 +7,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using SpaceStationMonitor;
+using SpaceStationMonitor.Achievements;
 using SpaceStationMonitor.BugStrategies;
 
 // ── Splash gate ─────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ var repairSystem = new RepairSystem(strategy);
 var eventEngine = new EventEngine();
 var cascadeEngine = new CascadeEngine(strategy);
 var display = new GameDisplay();
+var achievementSystem = new AchievementSystem();
 int selectedSubsystem = 0;
 
 // ── OTel setup ──────────────────────────────────────────────────────────────
@@ -176,6 +178,7 @@ try
         }
 
         display.SetRepairMessage(null);
+        display.SetAchievement(null);
 
         if (shutdownCts.IsCancellationRequested) break;
 
@@ -253,6 +256,9 @@ try
 
             eventEngine.ApplyEvent(stationEvent, station);
 
+            if (stationEvent.Type == StationEventType.SolarFlare)
+                station.RecordSolarFlare();
+
             Telemetry.EventsTotal.Add(1,
                 new KeyValuePair<string, object?>("event.type", stationEvent.Type.ToString()),
                 new KeyValuePair<string, object?>("event.severity", stationEvent.Severity.ToString()));
@@ -269,6 +275,8 @@ try
         }
 
         Telemetry.CyclesTotal.Add(strategy.CycleCounterIncrement());
+        station.EndCycle();
+        achievementSystem.CheckAndFire(station, cycleActivity, logger, display);
         cycleActivity?.SetTag("hull.integrity", Math.Round(station.HullIntegrity, 1));
 
         logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
@@ -301,6 +309,7 @@ else
 }
 Console.WriteLine($"  Cycles survived: {station.CycleCount}");
 Console.WriteLine($"  Final hull integrity: {station.HullIntegrity:F1}%");
+Console.WriteLine($"  Achievements: {achievementSystem.UnlockedNames.Count} — {string.Join(", ", achievementSystem.UnlockedNames)}");
 Console.ResetColor();
 
 logger.LogInformation("Game over — Cycles: {Cycles}, Hull: {Hull:F1}%",
@@ -348,6 +357,7 @@ void HandleRepair(Station station, RepairSystem repairSystem, int subsystemIndex
             : 0;
         Telemetry.RepairEffectiveness.Record(effectiveness,
             new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+        station.RecordRepair(effectiveness);
 
         if (!result.IsHealthy)
         {
