@@ -1,3 +1,5 @@
+using SpaceStationMonitor.Sampling;
+
 namespace SpaceStationMonitor;
 
 public class GameDisplay
@@ -28,7 +30,7 @@ public class GameDisplay
         Console.ResetColor();
     }
 
-    public void Render(Station station)
+    public void Render(Station station, HullThresholdSampler? sampler = null)
     {
         ClearIfInteractive();
         var uptime = DateTime.UtcNow - station.StartTime;
@@ -39,8 +41,24 @@ public class GameDisplay
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
         WritePaddedLine("          SPACE STATION MONITOR v1.0              ");
 
-        Console.ForegroundColor = station.HullIntegrity < 30 ? ConsoleColor.Red : ConsoleColor.Cyan;
-        WritePaddedLine($"          Hull Integrity: {hullStr,-24}");
+        // Row 3 — hull + sampler badge. Column accounting (UI §1.3): 10 + 16 + 7 + 9 + 8 = 50.
+        var hullColor = station.HullIntegrity < 30 ? ConsoleColor.Red : ConsoleColor.Cyan;
+        if (sampler != null)
+        {
+            var stormy = sampler.CurrentRegime == SamplingRegime.Storm;
+            var badgeText = stormy ? "◉ rec" : "◌ idle";  // ◉ rec / ◌ idle
+            var badgeColor = stormy ? ConsoleColor.Red : ConsoleColor.DarkCyan;
+            WritePaddedSegments(
+                ("          Hull Integrity: ", ConsoleColor.Cyan),
+                ($"{hullStr,-7}", hullColor),
+                ("Sampler: ", ConsoleColor.Cyan),
+                ($"{badgeText,-8}", badgeColor));
+        }
+        else
+        {
+            Console.ForegroundColor = hullColor;
+            WritePaddedLine($"          Hull Integrity: {hullStr,-24}");
+        }
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
@@ -104,6 +122,39 @@ public class GameDisplay
     {
         var inner = content.Length > InnerWidth ? content[..InnerWidth] : content;
         Console.WriteLine($"║{inner}{new string(' ', InnerWidth - inner.Length)}║");
+    }
+
+    // Writes a single inner row composed of multiple colored segments. Caller is
+    // responsible for sizing segments so the sum matches InnerWidth — this method
+    // pads with spaces if shorter and truncates the last segment if longer.
+    private static void WritePaddedSegments(params (string text, ConsoleColor color)[] segments)
+    {
+        var prevColor = Console.ForegroundColor;
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.Write("║");
+
+        int written = 0;
+        foreach (var (text, color) in segments)
+        {
+            var remaining = InnerWidth - written;
+            if (remaining <= 0) break;
+            var slice = text.Length > remaining ? text[..remaining] : text;
+            Console.ForegroundColor = color;
+            Console.Write(slice);
+            written += slice.Length;
+        }
+
+        if (written < InnerWidth)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write(new string(' ', InnerWidth - written));
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("║");
+
+        Console.ForegroundColor = prevColor;
     }
 
     // Console.Clear() throws IOException when stdout is redirected (xUnit test runner).
