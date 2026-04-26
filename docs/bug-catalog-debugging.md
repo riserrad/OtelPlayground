@@ -8,7 +8,7 @@ This cheat sheet is a walkthrough, not an answer key. For each bug it nudges you
 
 By default, one of the six strategies below is picked at random when the game starts. If you want to control it:
 
-- `BUG_STRATEGY=<name>` forces a specific strategy. Case-insensitive. Valid names: `LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`. Unknown names exit with code 2 and print the valid list to stderr.
+- `BUG_STRATEGY=<name>` forces a specific strategy. Case-insensitive. Valid names: `LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`, `SamplingBlindSpot`. Unknown names exit with code 2 and print the valid list to stderr.
 - `BUG_STRATEGY_SEED=<int>` seeds the RNG that picks both the target subsystem and the strategy. Same seed, same `(target, strategy)` pair. Only used when `BUG_STRATEGY` is unset.
 
 On startup the game logs `Bug strategy: <Name>, target: <Target>` so you know what was chosen. The mechanics of each strategy stay hidden, since figuring those out is the point.
@@ -95,3 +95,17 @@ Each section has the symptom you'll notice as a player, then a numbered walkthro
 4. Filter logs by "quota exhausted". How many entries show up inside a single cycle? Is one user click producing one entry, or many?
 
 *Teaches: sanity-checking counter rates against actual user actions. Ratio metrics. Spans record what the system attempted, not just what the user asked for, and that gap is where retry bugs live.*
+
+---
+
+## SamplingBlindSpot
+
+**Symptom:** the counter says N cascade failures but Traces show far fewer. The game-over screen even rubs your nose in it: `Cascade failures: 7  |  Traces captured: 1`.
+
+1. Open Metrics. Pull `station.cascade.failures`. Sum the rate over the session. Does the total line up with what the game-over screen reported?
+2. Switch to Traces, filter by `name=CascadeCheck`, count them over the same window. How does the trace count compare to the counter total?
+3. The mismatch is the bug. Counters and traces are independent pipelines — sampling decisions only touch traces. Where would you look to confirm the sampler is the cause?
+4. Open the `bug.strategy` resource attribute on any span you do still see. The strategy name is the giveaway, but what does the sampler config in `Program.cs` look like to make it land?
+5. Compare against `B2` — the hull-driven sampler should ramp up tracing on critical hull. Is it doing that, or is something pinning the rate low?
+
+*Teaches: head sampling makes its decision before the cascade tag exists, so it cannot bias toward errors. Counters and traces are independent — trace loss does not affect metric totals. This is the case for pairing head sampling with tail-based sampling and/or always-on error sampling in production.*

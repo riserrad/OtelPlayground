@@ -44,6 +44,9 @@ public class Station
     public int CycleCount { get; private set; }
     public DateTime StartTime { get; } = DateTime.UtcNow;
 
+    public int CascadeCount { get; internal set; }
+    public int CascadesTracedCount { get; internal set; }
+
     public double HullIntegrity =>
         Subsystems.Average(s => Math.Max(0, s.Health));
 
