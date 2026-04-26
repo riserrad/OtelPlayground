@@ -41,12 +41,12 @@ public class GameDisplay
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
         WritePaddedLine("          SPACE STATION MONITOR v1.0              ");
 
-        // Row 3 — hull + sampler badge. Column accounting (UI §1.3): 10 + 16 + 7 + 9 + 8 = 50.
+        // Row 3 column budget must total InnerWidth: 10 + 16 + 7 + 9 + 8 = 50.
         var hullColor = station.HullIntegrity < 30 ? ConsoleColor.Red : ConsoleColor.Cyan;
         if (sampler != null)
         {
             var stormy = sampler.CurrentRegime == SamplingRegime.Storm;
-            var badgeText = stormy ? "◉ rec" : "◌ idle";  // ◉ rec / ◌ idle
+            var badgeText = stormy ? "◉ rec" : "◌ idle";
             var badgeColor = stormy ? ConsoleColor.Red : ConsoleColor.DarkCyan;
             WritePaddedSegments(
                 ("          Hull Integrity: ", ConsoleColor.Cyan),
@@ -131,9 +131,9 @@ public class GameDisplay
     }
 
     /// <summary>
-    /// Writes a single inner row composed of multiple colored segments. Caller is
-    /// responsible for sizing segments so the sum matches <see cref="InnerWidth"/> —
-    /// this method pads with spaces if shorter and truncates the last segment if longer.
+    /// Writes a single inner row composed of multiple colored segments. Caller is responsible
+    /// for sizing segments so the sum matches <see cref="InnerWidth"/>; the method pads with
+    /// spaces when shorter and truncates the last segment when longer.
     /// </summary>
     /// <param name="segments">Ordered (text, foreground color) pairs rendered left-to-right.</param>
     private static void WritePaddedSegments(params (string text, ConsoleColor color)[] segments)

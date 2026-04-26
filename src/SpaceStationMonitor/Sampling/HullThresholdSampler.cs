@@ -12,7 +12,7 @@ public enum SamplingRegime
 /// Hull-driven sampler with hysteresis.
 ///   Storm  (RecordAndSample): hull ≤ 70.0
 ///   Calm   (TraceIdRatioBased(0.10)): hull > 75.0
-///   Dead-band (70 &lt; hull ≤ 75): keep current regime — avoids per-cycle flicker.
+///   Dead-band (70 &lt; hull ≤ 75): keep current regime to avoid per-cycle flicker.
 /// </summary>
 public sealed class HullThresholdSampler : Sampler
 {
@@ -26,7 +26,7 @@ public sealed class HullThresholdSampler : Sampler
     public HullThresholdSampler(Func<double> hullProvider)
     {
         _hullProvider = hullProvider;
-        // Constructed once and reused — never re-allocated per ShouldSample call.
+        // Constructed once and reused, never re-allocated per ShouldSample call.
         _ratioBased = new TraceIdRatioBasedSampler(0.10);
         Description = "HullThresholdSampler{calm=ratio(0.10),storm=record,hyst=70/75}";
 
@@ -38,8 +38,7 @@ public sealed class HullThresholdSampler : Sampler
     }
 
     /// <summary>
-    /// When non-null, ShouldSample delegates to this sampler and ignores hull state.
-    /// Set by D2 (SamplingBlindSpot strategy) to pin a hostile fixed-rate sampler.
+    /// Set to a non-null sampler to override hull-driven behavior; null restores hull-threshold logic.
     /// </summary>
     public Sampler? OverrideSampler { get; set; }
 
