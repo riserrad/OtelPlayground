@@ -131,9 +131,12 @@ logger.LogInformation("Bug strategy: {Name}, target: {Target}",
     strategy.Name, strategy.BugTargetSubsystem);
 
 // ── Run the game loop ───────────────────────────────────────────────────────
+// onQuit is wired to the root shutdown CTS — child linked tokens inside the loop's per-cycle
+// wait don't propagate cancellation back up here, so the Q handler needs an upstream hook.
 var gameLoop = new GameLoop(
     station, repairSystem, eventEngine, cascadeEngine, display, random, logger, strategy, testConfig,
-    achievementSystem);
+    achievementSystem,
+    onQuit: () => shutdownCts.Cancel());
 await gameLoop.RunAsync(shutdownCts.Token);
 
 // ── Game over ───────────────────────────────────────────────────────────────

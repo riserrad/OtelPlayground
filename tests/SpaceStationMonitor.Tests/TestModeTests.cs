@@ -89,6 +89,57 @@ public class TestModeTests
             $"Expected <200ms for 2 cycles at 50ms tick, got {sw.ElapsedMilliseconds}ms");
     }
 
+    [Fact]
+    public async Task Q_KeyPress_TriggersGracefulShutdown()
+    {
+        // Regression test for the GameLoop refactor's Q-quit bug: PollInputAsync was cancelling
+        // its own linked child token, which does NOT propagate to the parent shutdown token, so
+        // the cycle loop kept running. The fix routes Q through an upstream onQuit callback that
+        // Program.cs wires to its real shutdownCts.Cancel().
+        // Pre-loaded so the very first PollInputAsync poll picks up the 'Q' deterministically —
+        // avoids a thread-safety / scheduling race between Task.Run and the polling loop.
+        var keys = new Queue<char>(new[] { 'Q' });
+        bool quitCalled = false;
+        using var rootCts = new CancellationTokenSource();
+
+        var station = new Station();
+        var strategy = new NoOpBugStrategy();
+        var repairSystem = new RepairSystem(strategy);
+        var eventEngine = new EventEngine();
+        var cascadeEngine = new CascadeEngine(strategy);
+        var display = new GameDisplay();
+        var random = new Random(42);
+
+        var loop = new GameLoop(
+            station, repairSystem, eventEngine, cascadeEngine, display, random,
+            NullLogger.Instance, strategy,
+            new TestModeConfig(TestMode: false, MaxCycles: null, TickInterval: null),
+            onQuit: () =>
+            {
+                quitCalled = true;
+                rootCts.Cancel();
+            },
+            keyReader: () => keys.Count > 0 ? keys.Dequeue() : (char?)null);
+
+        // Push the Q press shortly after RunAsync starts polling.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(50);
+            keys.Enqueue('Q');
+        });
+
+        // Safety guard so a regression doesn't hang the test forever.
+        using var safety = CancellationTokenSource.CreateLinkedTokenSource(rootCts.Token);
+        safety.CancelAfter(TimeSpan.FromSeconds(3));
+
+        await loop.RunAsync(safety.Token);
+
+        Assert.True(quitCalled, "onQuit callback should fire when 'Q' is read by the input loop");
+        Assert.True(rootCts.IsCancellationRequested,
+            "root shutdown CTS should be cancelled by the Q handler — not just a child linked token");
+        Assert.Equal(0, station.CycleCount);
+    }
+
     private static (GameLoop loop, Station station) BuildLoop(TestModeConfig config)
     {
         var station = new Station();

@@ -25,6 +25,8 @@ public sealed class GameLoop
     private readonly IBugStrategy _strategy;
     private readonly TestModeConfig _testConfig;
     private readonly AchievementSystem? _achievementSystem;
+    private readonly Action? _onQuit;
+    private readonly Func<char?>? _keyReader;
 
     private int _selectedSubsystem;
 
@@ -38,7 +40,9 @@ public sealed class GameLoop
         ILogger logger,
         IBugStrategy strategy,
         TestModeConfig testConfig,
-        AchievementSystem? achievementSystem = null)
+        AchievementSystem? achievementSystem = null,
+        Action? onQuit = null,
+        Func<char?>? keyReader = null)
     {
         _station = station;
         _repairSystem = repairSystem;
@@ -50,6 +54,8 @@ public sealed class GameLoop
         _strategy = strategy;
         _testConfig = testConfig;
         _achievementSystem = achievementSystem;
+        _onQuit = onQuit;
+        _keyReader = keyReader;
     }
 
     public async Task RunAsync(CancellationToken shutdownToken)
@@ -193,29 +199,14 @@ public sealed class GameLoop
         {
             while (!waitCts.Token.IsCancellationRequested)
             {
-                if (Console.KeyAvailable)
+                if (TryReadKey(out var key))
                 {
-                    var key = Console.ReadKey(intercept: true);
-                    switch (char.ToUpperInvariant(key.KeyChar))
+                    if (HandleKeyPress(key))
                     {
-                        case '1': _selectedSubsystem = 0; _display.Render(_station); break;
-                        case '2': _selectedSubsystem = 1; _display.Render(_station); break;
-                        case '3': _selectedSubsystem = 2; _display.Render(_station); break;
-                        case '4': _selectedSubsystem = 3; _display.Render(_station); break;
-
-                        case 'R':
-                            HandleRepair();
-                            break;
-
-                        case 'E':
-                            HandleEmergencyPower();
-                            break;
-
-                        case 'Q':
-                            waitCts.Cancel();
-                            // Re-throw via the linked source so the outer loop's IsCancellationRequested check on
-                            // the original shutdown token also flips. The caller owns the shutdown CTS.
-                            throw new OperationCanceledException();
+                        // Q was pressed — _onQuit has cancelled the upstream shutdown source.
+                        // Exit the polling loop immediately; the caller's outer loop will see
+                        // shutdownToken.IsCancellationRequested and break out of the cycle loop.
+                        return;
                     }
                 }
                 await Task.Delay(100, waitCts.Token);
@@ -223,8 +214,59 @@ public sealed class GameLoop
         }
         catch (OperationCanceledException)
         {
-            // Wait timer expired or shutdown
+            // waitCts elapsed for the cycle interval, or upstream shutdown fired.
         }
+    }
+
+    // Returns true when the key handler signals the polling loop should exit immediately
+    // (currently only on 'Q', which cancels the upstream shutdown source via _onQuit).
+    private bool HandleKeyPress(char key)
+    {
+        switch (key)
+        {
+            case '1': _selectedSubsystem = 0; _display.Render(_station); break;
+            case '2': _selectedSubsystem = 1; _display.Render(_station); break;
+            case '3': _selectedSubsystem = 2; _display.Render(_station); break;
+            case '4': _selectedSubsystem = 3; _display.Render(_station); break;
+
+            case 'R': HandleRepair(); break;
+            case 'E': HandleEmergencyPower(); break;
+
+            case 'Q':
+                // Linked-token sources only propagate parent→child, so cancelling waitCts here
+                // would NOT signal the root shutdown CTS — the cycle loop would resume into the
+                // next tick. The fix: route through an upstream callback that the caller (Program.cs)
+                // wires to its own shutdownCts.Cancel().
+                _onQuit?.Invoke();
+                return true;
+        }
+        return false;
+    }
+
+    // Test seam: when _keyReader is non-null (set by tests), we read from that delegate
+    // instead of touching Console.KeyAvailable / Console.ReadKey. In production both call
+    // sites end up at the real Console — same behaviour, plus tests can pump keys.
+    private bool TryReadKey(out char key)
+    {
+        if (_keyReader != null)
+        {
+            var k = _keyReader();
+            if (k.HasValue)
+            {
+                key = char.ToUpperInvariant(k.Value);
+                return true;
+            }
+            key = '\0';
+            return false;
+        }
+
+        if (Console.KeyAvailable)
+        {
+            key = char.ToUpperInvariant(Console.ReadKey(intercept: true).KeyChar);
+            return true;
+        }
+        key = '\0';
+        return false;
     }
 
     private void HandleRepair()
