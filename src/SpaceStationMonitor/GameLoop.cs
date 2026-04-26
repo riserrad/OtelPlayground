@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry.Trace;
 using SpaceStationMonitor.Achievements;
 using SpaceStationMonitor.BugStrategies;
 using SpaceStationMonitor.Sampling;
@@ -98,11 +97,12 @@ public sealed class GameLoop
 
                 // D2 sidecar (dev-design §0.5, Path 2). Idempotent per-cycle —
                 // the IsBugActive flip drives the override on, deactivation drives it off.
+                // Reuses SamplingBlindSpotStrategy.HostileSampler — no per-cycle alloc.
                 if (_sampler is not null)
                 {
                     _sampler.OverrideSampler =
                         _repairSystem.Strategy is SamplingBlindSpotStrategy && isBugActive
-                            ? new TraceIdRatioBasedSampler(0.05)
+                            ? SamplingBlindSpotStrategy.HostileSampler
                             : null;
                 }
 

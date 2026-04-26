@@ -42,7 +42,15 @@ public sealed class HullThresholdSampler : Sampler
     /// </summary>
     public Sampler? OverrideSampler { get; set; }
 
-    public SamplingRegime CurrentRegime => _currentRegime;
+    /// <summary>
+    /// While <see cref="OverrideSampler"/> is non-null, regime reads as Calm
+    /// regardless of hull — the badge stays Calm even as hull collapses, which is
+    /// the visible-but-easy-to-miss D2 SamplingBlindSpot teaching beat. The
+    /// underlying <c>_currentRegime</c> stays frozen so transitions resume cleanly
+    /// from where they were when the override clears.
+    /// </summary>
+    public SamplingRegime CurrentRegime =>
+        OverrideSampler is not null ? SamplingRegime.Calm : _currentRegime;
 
     public override SamplingResult ShouldSample(in SamplingParameters samplingParameters)
     {

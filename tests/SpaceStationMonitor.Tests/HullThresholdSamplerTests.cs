@@ -131,6 +131,33 @@ public class HullThresholdSamplerTests
             sampler.ShouldSample(MakeParams(ActivityTraceId.CreateRandom())).Decision);
     }
 
+    // RISK-1: while OverrideSampler is set, the badge must read Calm regardless
+    // of hull — that's the visible-but-easy-to-miss D2 SamplingBlindSpot teaching
+    // beat (counters say cascades happened; badge says Calm; player digs in).
+    // The underlying _currentRegime stays frozen; clearing the override resumes
+    // hull-driven transitions cleanly.
+    [Fact]
+    public void CurrentRegime_ForcesCalm_WhenOverrideSamplerSet()
+    {
+        double hull = 60.0; // Storm baseline.
+        var sampler = new HullThresholdSampler(() => hull);
+        Assert.Equal(SamplingRegime.Storm, sampler.CurrentRegime);
+
+        // Phase 1: hull=60 + override set → Calm.
+        sampler.OverrideSampler = new TraceIdRatioBasedSampler(0.05);
+        Assert.Equal(SamplingRegime.Calm, sampler.CurrentRegime);
+
+        // Phase 2: hull=90 + override still set → Calm.
+        hull = 90.0;
+        Assert.Equal(SamplingRegime.Calm, sampler.CurrentRegime);
+
+        // Phase 3: clear override + hull=90 → Calm via hull path.
+        // Drive ShouldSample once so UpdateRegime() catches up to the new hull.
+        sampler.OverrideSampler = null;
+        sampler.ShouldSample(MakeParams(ActivityTraceId.CreateRandom()));
+        Assert.Equal(SamplingRegime.Calm, sampler.CurrentRegime);
+    }
+
     private static SamplingParameters MakeParams(ActivityTraceId traceId)
         => new SamplingParameters(
             parentContext: default,
