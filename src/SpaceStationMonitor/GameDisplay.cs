@@ -130,9 +130,12 @@ public class GameDisplay
         Console.WriteLine($"║{inner}{new string(' ', InnerWidth - inner.Length)}║");
     }
 
-    // Writes a single inner row composed of multiple colored segments. Caller is
-    // responsible for sizing segments so the sum matches InnerWidth — this method
-    // pads with spaces if shorter and truncates the last segment if longer.
+    /// <summary>
+    /// Writes a single inner row composed of multiple colored segments. Caller is
+    /// responsible for sizing segments so the sum matches <see cref="InnerWidth"/> —
+    /// this method pads with spaces if shorter and truncates the last segment if longer.
+    /// </summary>
+    /// <param name="segments">Ordered (text, foreground color) pairs rendered left-to-right.</param>
     private static void WritePaddedSegments(params (string text, ConsoleColor color)[] segments)
     {
         var prevColor = Console.ForegroundColor;
