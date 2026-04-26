@@ -10,6 +10,7 @@ public static class BugStrategyCatalog
         new StickyCascadeMultiplierStrategy(bugTarget),
         new WrongTargetDegradationStrategy(bugTarget),
         new RetryStormStrategy(bugTarget),
+        new SamplingBlindSpotStrategy(bugTarget),
     ];
 
     public static IBugStrategy? FindByName(IEnumerable<IBugStrategy> strategies, string name)

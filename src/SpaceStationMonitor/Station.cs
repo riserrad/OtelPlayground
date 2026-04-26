@@ -56,6 +56,7 @@ public class Station
     public int CyclesAfterEmergencyExhausted { get; private set; }
 
     public int CascadeCount { get; internal set; }
+    public int CascadesTracedCount { get; internal set; }
 
     public int Score => 10 * CycleCount + 5 * RepairsTotalThisSession - 50 * CascadeCount;
 

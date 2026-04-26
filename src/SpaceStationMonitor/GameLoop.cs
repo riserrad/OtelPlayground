@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using SpaceStationMonitor.Achievements;
 using SpaceStationMonitor.BugStrategies;
+using SpaceStationMonitor.Sampling;
 
 namespace SpaceStationMonitor;
 
@@ -27,6 +28,7 @@ public sealed class GameLoop
     private readonly AchievementSystem? _achievementSystem;
     private readonly Action? _onQuit;
     private readonly Func<char?>? _keyReader;
+    private readonly HullThresholdSampler? _sampler;
 
     private int _selectedSubsystem;
 
@@ -42,7 +44,8 @@ public sealed class GameLoop
         TestModeConfig testConfig,
         AchievementSystem? achievementSystem = null,
         Action? onQuit = null,
-        Func<char?>? keyReader = null)
+        Func<char?>? keyReader = null,
+        HullThresholdSampler? sampler = null)
     {
         _station = station;
         _repairSystem = repairSystem;
@@ -56,11 +59,12 @@ public sealed class GameLoop
         _achievementSystem = achievementSystem;
         _onQuit = onQuit;
         _keyReader = keyReader;
+        _sampler = sampler;
     }
 
     public async Task RunAsync(CancellationToken shutdownToken)
     {
-        _display.Render(_station);
+        _display.Render(_station, _sampler);
 
         try
         {
@@ -90,6 +94,17 @@ public sealed class GameLoop
                 if (shutdownToken.IsCancellationRequested) break;
 
                 bool isBugActive = _repairSystem.IsBugActive;
+
+                // D2 sidecar (dev-design §0.5, Path 2). Idempotent per-cycle —
+                // the IsBugActive flip drives the override on, deactivation drives it off.
+                // Reuses SamplingBlindSpotStrategy.HostileSampler — no per-cycle alloc.
+                if (_sampler is not null)
+                {
+                    _sampler.OverrideSampler =
+                        _repairSystem.Strategy is SamplingBlindSpotStrategy && isBugActive
+                            ? SamplingBlindSpotStrategy.HostileSampler
+                            : null;
+                }
 
                 using var cycleActivity = Telemetry.ActivitySource.StartActivity(
                     "StationCycle",
@@ -142,6 +157,12 @@ public sealed class GameLoop
                         new KeyValuePair<string, object?>("affected.subsystem",
                             string.Join(",", cascade.AffectedSubsystems)));
 
+                    _station.CascadeCount++;
+                    // IsAllDataRequested is the sampler decision, not a metric readback —
+                    // PM ratified this read for the SamplingBlindSpot reveal (dev-design §0.4).
+                    if (cascadeActivity != null && cascadeActivity.IsAllDataRequested)
+                        _station.CascadesTracedCount++;
+
                     _logger.LogError("Cascade failure: {Source} → {Affected}",
                         cascade.SourceSubsystem, string.Join(", ", cascade.AffectedSubsystems));
                 }
@@ -182,7 +203,7 @@ public sealed class GameLoop
                 _logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
                     _station.CycleCount, _station.HullIntegrity);
 
-                _display.Render(_station);
+                _display.Render(_station, _sampler);
 
                 if (_testConfig.MaxCycles is int max && _station.CycleCount >= max) break;
             }
@@ -224,10 +245,10 @@ public sealed class GameLoop
     {
         switch (key)
         {
-            case '1': _selectedSubsystem = 0; _display.Render(_station); break;
-            case '2': _selectedSubsystem = 1; _display.Render(_station); break;
-            case '3': _selectedSubsystem = 2; _display.Render(_station); break;
-            case '4': _selectedSubsystem = 3; _display.Render(_station); break;
+            case '1': _selectedSubsystem = 0; _display.Render(_station, _sampler); break;
+            case '2': _selectedSubsystem = 1; _display.Render(_station, _sampler); break;
+            case '3': _selectedSubsystem = 2; _display.Render(_station, _sampler); break;
+            case '4': _selectedSubsystem = 3; _display.Render(_station, _sampler); break;
 
             case 'R': HandleRepair(); break;
             case 'E': HandleEmergencyPower(); break;
@@ -279,7 +300,7 @@ public sealed class GameLoop
                 new KeyValuePair<string, object?>("subsystem.name", sub.Name));
             _logger.LogInformation("Repair denied on {Name}: quota exhausted this cycle", sub.Name);
             _display.SetRepairMessage("No repairs left this cycle — wait for next tick");
-            _display.Render(_station);
+            _display.Render(_station, _sampler);
             return;
         }
 
@@ -336,7 +357,7 @@ public sealed class GameLoop
 
         _display.SetRepairMessage(
             $"Repaired {sub.Name}: {currentHealth:F0}% → {expectedHealth:F0}%");
-        _display.Render(_station);
+        _display.Render(_station, _sampler);
     }
 
     private void HandleEmergencyPower()
@@ -352,6 +373,6 @@ public sealed class GameLoop
         {
             _display.SetRepairMessage("No emergency power remaining!");
         }
-        _display.Render(_station);
+        _display.Render(_station, _sampler);
     }
 }
