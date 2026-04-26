@@ -55,7 +55,6 @@ public class Station
     public bool MinSubsystemStayedAbove30 { get; private set; }
     public int CyclesAfterEmergencyExhausted { get; private set; }
 
-    // CascadeCount is owned by D2 (Chohfi) — incremented from Program.cs cascade block.
     public int CascadeCount { get; internal set; }
 
     public int Score => 10 * CycleCount + 5 * RepairsTotalThisSession - 50 * CascadeCount;
