@@ -12,13 +12,14 @@ public static class BugSelector
     // seed-driven).
     public static (string target, IBugStrategy strategy) Select(
         Func<string, string?> env,
-        string[] subsystemNames)
+        string[] subsystemNames,
+        TimeSpan? activationDelay = null)
     {
         var seedEnv = env("BUG_STRATEGY_SEED");
         var rng = int.TryParse(seedEnv, out var seed) ? new Random(seed) : new Random();
 
         var target = subsystemNames[rng.Next(subsystemNames.Length)];
-        var strategies = BugStrategyCatalog.All(target);
+        var strategies = BugStrategyCatalog.All(target, activationDelay);
 
         var forcedName = env("BUG_STRATEGY");
         if (!string.IsNullOrWhiteSpace(forcedName))

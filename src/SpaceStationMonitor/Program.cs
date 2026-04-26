@@ -13,6 +13,21 @@ using SpaceStationMonitor.Sampling;
 // ── Test-mode flags (parsed once at startup) ────────────────────────────────
 var testConfig = TestModeConfig.FromEnvironment(Environment.GetEnvironmentVariable);
 
+// ── BUG_ACTIVATION_DELAY_MS (parsed once at startup) ────────────────────────
+// Optional env-var override for every strategy's activation delay. Lets QA / CI
+// exercise post-bug behavior without sitting through the production-tuned wait.
+// Unset, empty, non-integer, or negative all fall back to the per-strategy default.
+var bugDelayRaw = Environment.GetEnvironmentVariable("BUG_ACTIVATION_DELAY_MS");
+TimeSpan? bugActivationDelay = null;
+bool bugDelayInvalid = false;
+if (!string.IsNullOrEmpty(bugDelayRaw))
+{
+    if (int.TryParse(bugDelayRaw, out var bugDelayMs) && bugDelayMs >= 0)
+        bugActivationDelay = TimeSpan.FromMilliseconds(bugDelayMs);
+    else
+        bugDelayInvalid = true;
+}
+
 // ── Splash gate ─────────────────────────────────────────────────────────────
 using var shutdownCts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -66,7 +81,7 @@ string bugTarget;
 IBugStrategy strategy;
 try
 {
-    (bugTarget, strategy) = BugSelector.Select(Environment.GetEnvironmentVariable, subsystemNames);
+    (bugTarget, strategy) = BugSelector.Select(Environment.GetEnvironmentVariable, subsystemNames, bugActivationDelay);
 }
 catch (InvalidOperationException ex)
 {
@@ -118,6 +133,13 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 });
 
 var logger = loggerFactory.CreateLogger("SpaceStationMonitor");
+
+if (bugDelayInvalid)
+{
+    logger.LogWarning(
+        "Ignoring invalid BUG_ACTIVATION_DELAY_MS={Value}; expected a non-negative integer. Using per-strategy default.",
+        bugDelayRaw);
+}
 
 // ── Register gauge metrics (need Station reference) ─────────────────────────
 Telemetry.Meter.CreateObservableGauge("station.subsystem.health",
