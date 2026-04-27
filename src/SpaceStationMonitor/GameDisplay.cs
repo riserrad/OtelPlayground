@@ -32,7 +32,7 @@ public class GameDisplay
         Console.ResetColor();
     }
 
-    public void Render(Station station, HullThresholdSampler? sampler = null)
+    public void Render(Station station, int selectedSubsystem, HullThresholdSampler? sampler = null)
     {
         ClearIfInteractive();
         var hullStr = $"{station.HullIntegrity:F0}%";
@@ -41,24 +41,20 @@ public class GameDisplay
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
         WritePaddedLine("          SPACE STATION MONITOR v1.0              ");
 
-        // Row 3 column budget must total InnerWidth: 10 + 16 + 7 + 9 + 8 = 50.
-        var hullColor = station.HullIntegrity < 30 ? ConsoleColor.Red : ConsoleColor.Cyan;
-        if (sampler != null)
+        var hullColor = station.HullIntegrity switch
         {
-            var stormy = sampler.CurrentRegime == SamplingRegime.Storm;
-            var badgeText = stormy ? "◉ rec" : "◌ idle";
-            var badgeColor = stormy ? ConsoleColor.Red : ConsoleColor.DarkCyan;
-            WritePaddedSegments(
-                ("          Hull Integrity: ", ConsoleColor.Cyan),
-                ($"{hullStr,-7}", hullColor),
-                ("Sampler: ", ConsoleColor.Cyan),
-                ($"{badgeText,-8}", badgeColor));
-        }
-        else
-        {
-            Console.ForegroundColor = hullColor;
-            WritePaddedLine($"          Hull Integrity: {hullStr,-24}");
-        }
+            < 15 => ConsoleColor.Red,
+            < 30 => ConsoleColor.Yellow,
+            _ => ConsoleColor.Green
+        };
+        var hullBarLength = (int)(station.HullIntegrity / 100.0 * 16);
+        var hullBar = new string('█', hullBarLength) + new string('░', 16 - hullBarLength);
+        WritePaddedSegments(
+            ("      Hull Integrity: ", ConsoleColor.Cyan),
+            (hullBar, hullColor),
+            ("  ", hullColor),
+            ($"{hullStr,-4}", hullColor),
+            ("      ", ConsoleColor.Cyan));
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
@@ -67,18 +63,27 @@ public class GameDisplay
         {
             var sub = station.Subsystems[i];
             var barLength = (int)(sub.Health / 100.0 * 16);
-            var bar = new string('\u2588', barLength) + new string('\u2591', 16 - barLength);
-            var warning = sub.IsCritical ? " \u26A0" : "  ";
+            var bar = new string('█', barLength) + new string('░', 16 - barLength);
+            var warning = sub.IsCritical ? " ⚠" : "  ";
             var healthStr = $"{sub.Health:F0}%";
-
-            Console.ForegroundColor = sub.Health switch
+            var healthColor = sub.Health switch
             {
                 < 15 => ConsoleColor.Red,
                 < 30 => ConsoleColor.Yellow,
                 _ => ConsoleColor.Green
             };
 
-            WritePaddedLine($"  [{i + 1}] {sub.Name,-16} {bar}  {healthStr,-4}{warning}   ");
+            if (i == selectedSubsystem)
+            {
+                WritePaddedSegments(
+                    ("▶ ", ConsoleColor.Cyan),
+                    ($"[{i + 1}] {sub.Name,-16} {bar}  {healthStr,-4}{warning}   ", healthColor));
+            }
+            else
+            {
+                Console.ForegroundColor = healthColor;
+                WritePaddedLine($"  [{i + 1}] {sub.Name,-16} {bar}  {healthStr,-4}{warning}   ");
+            }
         }
 
         Console.ForegroundColor = ConsoleColor.Cyan;
@@ -88,19 +93,19 @@ public class GameDisplay
         if (_currentWarning != null)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            WritePaddedLine($"  \u26A0 {_currentWarning}");
+            WritePaddedLine($"  ⚠ {_currentWarning}");
             hasMessage = true;
         }
         if (_currentEvent != null)
         {
             Console.ForegroundColor = ConsoleColor.Magenta;
-            WritePaddedLine($"  \u2604 {_currentEvent}");
+            WritePaddedLine($"  ☄ {_currentEvent}");
             hasMessage = true;
         }
         if (_currentAchievement != null)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
-            WritePaddedLine($"  \u2605 {_currentAchievement}");
+            WritePaddedLine($"  ★ {_currentAchievement}");
             hasMessage = true;
         }
         if (_lastRepairMessage != null)
@@ -119,7 +124,8 @@ public class GameDisplay
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
         WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
         WritePaddedLine($"  [Q] Quit   Emerg Pwr: {station.EmergencyPowerRemaining,-2} |  Repairs: {station.RepairsRemainingThisCycle,-2} left");
-        WritePaddedLine($"  Cycle: {station.CycleCount,-9}|  Score: {station.Score,-22}");
+        var selectedName = station.Subsystems[selectedSubsystem].Name;
+        WritePaddedLine($"  Cycle: {station.CycleCount,-4}|  Score: {station.Score,-7}|  Sel: {selectedName,-10}");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
     }
