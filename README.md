@@ -42,14 +42,17 @@ If port 4317 is already in use (another collector, a previous Docker run), you'l
 
 Every few seconds, a new cycle runs. Subsystems lose health. Random events (solar flares, micrometeorites, power surges) can hit at any time. When a subsystem drops below 30% health, it triggers cascade failures that speed up degradation on everything else.
 
+The selected subsystem is marked with a `▶` in the list, and the footer shows it under `Sel:` so you always know what `R` will repair. The hull row uses a 16-cell bar that goes green / yellow / red as integrity drops.
+
 You get 3 emergency power charges. Use them wisely.
 
 **Here's the thing:** something in the station isn't working the way it should. The game won't tell you what it is. But the telemetry will. Can you figure out what's going wrong by looking at the traces and metrics in the Aspire Dashboard?
 
-One of six bug strategies is picked at random when the game starts (`LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`). The startup log shows which one and which subsystem it's targeting. If you want to control it:
+One of seven bug strategies is picked at random when the game starts (`LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`, `SamplingBlindSpot`). The startup log shows which one and which subsystem it's targeting. If you want to control it:
 
 - `BUG_STRATEGY=<name>` forces a specific strategy (case-insensitive). An unknown name exits with code 2 and prints the valid names to stderr.
 - `BUG_STRATEGY_SEED=<int>` seeds the RNG so the same seed reproduces the same `(target, strategy)` pair. Only used when `BUG_STRATEGY` is unset.
+- `BUG_ACTIVATION_DELAY_MS=<int>` overrides every strategy's activation delay (in milliseconds). Useful for QA or CI, where you don't want to sit through the default 2-minute warm-up before the bug starts firing. Invalid or negative values are ignored with a warning log and the per-strategy default is used.
 
 When you're ready to investigate, walk through [docs/bug-catalog-debugging.md](docs/bug-catalog-debugging.md). It's a question-driven cheat sheet that teaches the metrics → traces → logs triage motion without giving away the answer.
 
@@ -72,6 +75,8 @@ Each game cycle creates a parent span with child spans for individual operations
 The game tracks a handful of counters: `station.repairs.total`, `station.repairs.failed`, `station.repairs.denied`, `station.cascade.failures`, `station.events.total`, and `station.cycles.total`. These count what you'd expect from the names.
 
 There's also a histogram (`station.repair.effectiveness`) that records how much of each repair actually got applied vs. what was requested. A healthy repair scores 100%. If you see numbers below that... well, that's a clue.
+
+The histogram ships with trace-based exemplars wired up (`SetExemplarFilter(ExemplarFilterType.TraceBased)`). When you click a bucket in Aspire, you can jump straight to a representative `RepairAction` trace that landed in it. That's the metric → trace bridge: the histogram tells you something is off, the exemplar takes you to the exact span where it happened.
 
 Two gauges give you a live view: `station.subsystem.health` (per subsystem) and `station.hull.integrity` (overall).
 
