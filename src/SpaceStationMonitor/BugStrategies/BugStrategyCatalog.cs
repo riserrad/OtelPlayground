@@ -2,15 +2,19 @@ namespace SpaceStationMonitor.BugStrategies;
 
 public static class BugStrategyCatalog
 {
-    public static IBugStrategy[] All(string bugTarget) =>
+    // activationDelay = null lets each strategy use its BugStrategyBase default
+    // (currently 2 minutes). A non-null value overrides every strategy in the run
+    // uniformly — used by the BUG_ACTIVATION_DELAY_MS env-var path so QA / CI can
+    // exercise post-bug behavior without sitting through the production-tuned wait.
+    public static IBugStrategy[] All(string bugTarget, TimeSpan? activationDelay = null) =>
     [
-        new LeakyRepairStrategy(bugTarget),
-        new LatencyInjectionStrategy(bugTarget),
-        new SilentCounterCorruptionStrategy(bugTarget),
-        new StickyCascadeMultiplierStrategy(bugTarget),
-        new WrongTargetDegradationStrategy(bugTarget),
-        new RetryStormStrategy(bugTarget),
-        new SamplingBlindSpotStrategy(bugTarget),
+        new LeakyRepairStrategy(bugTarget, activationDelay),
+        new LatencyInjectionStrategy(bugTarget, activationDelay),
+        new SilentCounterCorruptionStrategy(bugTarget, activationDelay),
+        new StickyCascadeMultiplierStrategy(bugTarget, activationDelay),
+        new WrongTargetDegradationStrategy(bugTarget, activationDelay),
+        new RetryStormStrategy(bugTarget, activationDelay),
+        new SamplingBlindSpotStrategy(bugTarget, activationDelay),
     ];
 
     public static IBugStrategy? FindByName(IEnumerable<IBugStrategy> strategies, string name)

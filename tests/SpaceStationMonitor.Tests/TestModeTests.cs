@@ -132,10 +132,39 @@ public class TestModeTests
         Assert.Equal(0, station.CycleCount);
     }
 
-    private static (GameLoop loop, Station station) BuildLoop(TestModeConfig config)
+    [Fact]
+    public async Task TestMode_WithBugActivationDelay_StrategyActivatesWithinCycles()
+    {
+        // AC5 — BUG_ACTIVATION_DELAY_MS=100 + 32 cycles at 10ms tick crosses the
+        // activation threshold by ~cycle 11. Drives the env-var path through
+        // BugSelector → BugStrategyCatalog → strategy ctor end-to-end so the
+        // wire-up is exercised, not just the catalog unit boundary. Seeded so the
+        // strategy pick is deterministic across runs.
+        var env = new Dictionary<string, string?> { ["BUG_STRATEGY_SEED"] = "1" };
+        var (_, strategy) = BugSelector.Select(
+            k => env.GetValueOrDefault(k),
+            new[] { "Oxygen", "Power", "Shields", "Thermal" },
+            TimeSpan.FromMilliseconds(100));
+
+        Assert.False(strategy.IsBugActive);
+
+        var (loop, station) = BuildLoopWithStrategy(strategy, new TestModeConfig(
+            TestMode: true, MaxCycles: 32, TickInterval: TimeSpan.FromMilliseconds(10)));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await loop.RunAsync(cts.Token);
+
+        Assert.True(strategy.IsBugActive,
+            $"strategy '{strategy.Name}' should activate within 32×10ms cycles given 100ms delay");
+    }
+
+    private static (GameLoop loop, Station station) BuildLoop(TestModeConfig config) =>
+        BuildLoopWithStrategy(new NoOpBugStrategy(), config);
+
+    private static (GameLoop loop, Station station) BuildLoopWithStrategy(
+        IBugStrategy strategy, TestModeConfig config)
     {
         var station = new Station();
-        var strategy = new NoOpBugStrategy();
         var repairSystem = new RepairSystem(strategy);
         var eventEngine = new EventEngine();
         var cascadeEngine = new CascadeEngine(strategy);
