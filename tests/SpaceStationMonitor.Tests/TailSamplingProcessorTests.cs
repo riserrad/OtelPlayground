@@ -82,7 +82,7 @@ public class TailSamplingProcessorTests : IDisposable
         for (int i = 0; i < 1000; i++)
         {
             using var root = StartRoot();
-            // No error / cascade / failed-repair tags — falls into the 25%-by-hash bucket.
+            // No error / cascade / failed-repair tags, falls into the 25%-by-hash bucket.
             root.Stop();
             processor.OnEnd(root);
             traceIds[i] = root.TraceId;
@@ -102,14 +102,13 @@ public class TailSamplingProcessorTests : IDisposable
         var clock = new TestClock();
         var processor = new TailSamplingProcessor(graceWindow: TimeSpan.FromMilliseconds(200), nowProvider: () => clock.Now);
 
-        // Fill the buffer to exactly the cap with traces that have NOT had their root end yet —
-        // they would otherwise sit pending forever.
+        // Fill the buffer to exactly the cap. RootSeen flips true on each OnEnd because
+        // StartRoot produces parentless activities, but the test clock is not advanced, so
+        // FlushExpiredLocked sees (now - RootEndTime) < graceWindow and every trace stays Pending.
         var pendingIds = new ActivityTraceId[TailSamplingProcessor.DefaultBufferCap];
         for (int i = 0; i < TailSamplingProcessor.DefaultBufferCap; i++)
         {
-            // Use a child-ish activity (no Stop) so RootSeen stays false on the buffer.
             using var act = StartRoot();
-            // Don't call Stop — buffer entry exists, RootSeen flag stays false.
             processor.OnEnd(act);
             pendingIds[i] = act.TraceId;
         }

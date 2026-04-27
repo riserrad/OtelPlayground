@@ -18,7 +18,7 @@ public enum TailSamplingDecision
 /// decides keep/drop on root-span end + grace window. Errors, cascade-triggered traces, and
 /// failed-repair traces are kept; everything else falls into a 25% TraceId-hash sample.
 /// Real production tail sampling lives in the OpenTelemetry collector; this is a teaching
-/// simulation suitable for a single-process console app — see docs/bug-catalog-debugging.md.
+/// simulation suitable for a single-process console app. See docs/bug-catalog-debugging.md.
 /// </summary>
 public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 {
