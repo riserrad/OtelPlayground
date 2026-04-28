@@ -4,6 +4,10 @@ The game ships with a small catalog of bugs. One is picked at random each run. Y
 
 This cheat sheet is a walkthrough, not an answer key. For each bug it nudges you through the same triage motion: spot the anomaly in metrics, pivot to traces, confirm with logs. Resist the urge to skip ahead.
 
+The splash gate at game start asks whether you want to **just play** or to **play and learn Observability**. Just Playing runs the station with no bug active so you can focus on the game itself. Learning mode is where this catalog applies: a bug strategy is picked (random by default, override via `BUG_STRATEGY`), and the bug only shows up in telemetry. Pick mode 2 if you want anything below to matter.
+
+After the mode pick, the splash asks for a difficulty: **Tutorial**, **Normal**, **Hard**, or **Expert**. Difficulty is orthogonal to mode. It tunes the gameplay challenge (repairs per cycle, degradation pace, event frequency) without changing whether a bug is active or how telemetry is sampled. Pick whichever difficulty fits the time you have; the bug catalog walkthroughs apply identically across all four.
+
 ## Picking a strategy
 
 By default, one of the six strategies below is picked at random when the game starts. If you want to control it:
@@ -118,7 +122,7 @@ Each section has the symptom you'll notice as a player, then a numbered walkthro
 The space station has two sampling stages:
 
 - **Head sampler**: runs at span start, before any tag is set. Sees the span name and the parent context, nothing else. Uses cheap inputs to make a fast decision: keep this one, drop this one. In general, any sampler that decides at span creation time is a head sampler.
-- **Tail sampler**: runs after the trace has finished and every span has set its tags. Sees the whole trace at once and can keep traces that contain errors / cascades / failed repairs even if a head sampler would have dropped them. Treat tail sampling here as a conceptual contrast with head sampling; mode-specific wiring is introduced in a follow-up change.
+- **Tail sampler**: runs after the trace has finished and every span has set its tags. Sees the whole trace at once and can keep traces that contain errors / cascades / failed repairs even if a head sampler would have dropped them. Treat tail sampling here as a conceptual contrast with head sampling; profile-specific wiring is introduced in a follow-up change.
 
 A head sampler can never decide on a tag it has not seen yet. That is the whole reason `SamplingBlindSpot` works as a teaching beat. Head sampling at a low rate cannot bias toward errors, because the error tag does not exist when the decision is made.
 

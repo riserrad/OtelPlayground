@@ -26,12 +26,14 @@ public class Station
 {
     private readonly Random _random = new();
     private readonly int _repairsPerCycle;
+    private readonly double _baseDegradationMultiplier;
     private double _difficultyMultiplier = 1.0;
     private int _postBugCycles;
 
-    public Station(int repairsPerCycle = 3)
+    public Station(int repairsPerCycle = 3, double degradationMultiplier = 1.0)
     {
         _repairsPerCycle = repairsPerCycle;
+        _baseDegradationMultiplier = degradationMultiplier;
         RepairsRemainingThisCycle = repairsPerCycle;
     }
 
@@ -76,15 +78,18 @@ public class Station
 
         // Pre-bug: flat 1.0 (fun, winnable baseline).
         // Post-bug: step to 1.5x on activation, then +0.04 per cycle (compounding collapse).
+        // Effective multiplier is the cycle factor scaled by the difficulty's base degradation knob.
+        double cycleFactor;
         if (isBugActive)
         {
             _postBugCycles++;
-            _difficultyMultiplier = 1.5 + (_postBugCycles * 0.04);
+            cycleFactor = 1.5 + (_postBugCycles * 0.04);
         }
         else
         {
-            _difficultyMultiplier = 1.0;
+            cycleFactor = 1.0;
         }
+        _difficultyMultiplier = cycleFactor * _baseDegradationMultiplier;
     }
 
     public void RecordRepair(double effectivenessPercent)
