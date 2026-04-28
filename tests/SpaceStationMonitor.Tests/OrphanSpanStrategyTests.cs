@@ -56,6 +56,28 @@ public class OrphanSpanStrategyTests
     }
 
     [Fact]
+    public void OverrideStationCycleParent_AcrossInjectionCycles_ReturnsStableTraceIdAndDistinctSpanIds()
+    {
+        var cycle = 0;
+        var strategy = new OrphanSpanStrategy(
+            bugTarget: "Oxygen",
+            activationDelay: TimeSpan.Zero,
+            cycleProvider: () => cycle);
+
+        cycle = 3;
+        var first = strategy.OverrideStationCycleParent();
+        cycle = 6;
+        var second = strategy.OverrideStationCycleParent();
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        // Same synthetic upstream trace identity reused across injections.
+        Assert.Equal(first!.Value.TraceId, second!.Value.TraceId);
+        // Each injected cycle gets its own synthetic upstream parent span.
+        Assert.NotEqual(first.Value.SpanId, second.Value.SpanId);
+    }
+
+    [Fact]
     public void OverrideStationCycleParent_IncrementsInjectedCount()
     {
         var cycle = 0;

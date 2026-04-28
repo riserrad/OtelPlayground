@@ -8,17 +8,18 @@ namespace SpaceStationMonitor.BugStrategies;
 /// non-default <c>ParentSpanId</c>, <c>HasRemoteParent == true</c>, sampled-in via
 /// <see cref="ActivityTraceFlags.Recorded"/>.
 ///
-/// TraceId design choice (Path A): the synthetic context inherits the ambient trace's
-/// <c>TraceId</c> when one is current, otherwise a fresh random TraceId is generated for the
-/// injected cycle. This mirrors the production model where a downstream service receives a
-/// W3C traceparent header carrying the upstream's TraceId and starts its own root activity
-/// under that trace.
+/// The synthetic <see cref="ActivityTraceId"/> is fixed at construction and reused across
+/// every injection for the lifetime of the strategy instance. Each injected cycle gets a
+/// fresh <see cref="ActivitySpanId"/> as the synthetic upstream parent span. This mirrors a
+/// real downstream service receiving the same W3C <c>traceparent</c> trace identity on
+/// every call from a single upstream sidecar, with each call carrying its own parent span.
 /// </summary>
 public sealed class OrphanSpanStrategy : BugStrategyBase
 {
     private const int InjectEveryNthCycle = 3;
 
     private readonly Func<int> _cycleProvider;
+    private readonly ActivityTraceId _syntheticTraceId;
 
     public override string Name => "OrphanSpan";
 
@@ -32,6 +33,7 @@ public sealed class OrphanSpanStrategy : BugStrategyBase
         : base(bugTarget, activationDelay)
     {
         _cycleProvider = cycleProvider ?? (() => 0);
+        _syntheticTraceId = ActivityTraceId.CreateRandom();
     }
 
     public override ActivityContext? OverrideStationCycleParent()
@@ -41,13 +43,10 @@ public sealed class OrphanSpanStrategy : BugStrategyBase
         var cycle = _cycleProvider();
         if (cycle <= 0 || cycle % InjectEveryNthCycle != 0) return null;
 
-        var traceId = Activity.Current?.TraceId ?? ActivityTraceId.CreateRandom();
-        var spanId = ActivitySpanId.CreateRandom();
-
         InjectedCount++;
         return new ActivityContext(
-            traceId: traceId,
-            spanId: spanId,
+            traceId: _syntheticTraceId,
+            spanId: ActivitySpanId.CreateRandom(),
             traceFlags: ActivityTraceFlags.Recorded,
             traceState: null,
             isRemote: true);

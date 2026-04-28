@@ -129,8 +129,9 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
             }
             // Fallback path: the trace was remote-parented, so this process never
             // observes a local root; flush once activity has been quiet for the
-            // inactivity timeout.
-            if ((now - buf.LastActivityTime) >= _inactivityTimeout)
+            // inactivity timeout. Guarded on !RootSeen to make the contract explicit:
+            // any trace whose local root has been observed belongs to the grace path.
+            if (!buf.RootSeen && (now - buf.LastActivityTime) >= _inactivityTimeout)
                 (toDecide ??= new()).Add(id);
         }
         if (toDecide is null) return;

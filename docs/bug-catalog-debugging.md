@@ -153,4 +153,4 @@ A trace can span multiple processes. Each process sees only its own slice; the t
 
 **Completion signal for cross-process traces.** Root-end + grace works in a single-process app because every trace's root is observable locally. A remote-parented trace never sees its true root end, so the buffer needs a different completion signal. The one this codebase ships is an inactivity timeout: when no activity has been added to a buffered trace for a configurable window, flush. Real production tail samplers in the OpenTelemetry Collector use cross-process trace assembly (and a timeout fallback) for the same reason.
 
-*Teaches: cross-process tracing requires distinguishing "no parent at all" from "remote parent". Heuristics built on the single-process assumption silently misbehave once W3C propagation is wired up. The fix is one extra condition; the discipline is testing your trace pipeline against a remote-parented activity so the bug doesn't ship to production.*
+*Teaches: `Parent is null` is not the same as 'trace root' once W3C propagation is in play.*
