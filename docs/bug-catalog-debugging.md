@@ -158,3 +158,17 @@ A trace can span multiple processes. Each process sees only its own slice; the t
 **Completion signal for cross-process traces.** Root-end + grace works in a single-process app because every trace's root is observable locally. A remote-parented trace never sees its true root end, so the buffer needs a different completion signal. The one this codebase ships is an inactivity timeout: when no activity has been added to a buffered trace for a configurable window, flush. Real production tail samplers in the OpenTelemetry Collector use cross-process trace assembly (and a timeout fallback) for the same reason.
 
 *Teaches: `Parent is null` is not the same as 'trace root' once W3C propagation is in play.*
+
+## Semantic conventions
+
+Attribute keys are a contract. A metric, span, or log entry tagged `subsystem.name=Oxygen` and another tagged `subsystem=Oxygen` describe the same logical thing, but to a query engine they're two different dimensions. Filter by either key and you only see half the rows. The bug compounds the longer it lives because every consumer (dashboard, alert rule, downstream pipeline) is built against whichever key they happened to see first.
+
+OpenTelemetry maintains a Semantic Conventions spec for exactly this reason: to make the contract explicit and shareable across services. Drift sneaks in through refactors, copy-paste between services, and emission code that doesn't read the existing tag conventions before adding a new tag.
+
+**Symptom:** dashboard filter by attribute shows fewer rows than expected; total row count looks correct in aggregate but key-specific filters return half.
+
+**Look at:** distinct attribute keys per metric or span over a time window. A healthy emission site has one key per logical dimension; a drifted one has two or more.
+
+**Likely cause:** the same logical dimension is emitted under inconsistent keys (e.g. `subsystem.name` vs `subsystem`) across cycles, services, or refactors.
+
+*Teaches: attribute keys are a typed contract; the time to enforce it is at the emission boundary, not after a dashboard quietly under-counts for a week.*
