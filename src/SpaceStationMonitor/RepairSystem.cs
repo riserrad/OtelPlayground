@@ -53,7 +53,7 @@ public class RepairSystem
                     throw;
                 }
 
-                // About to retry — quota, if wired, has to cover this new attempt.
+                // About to retry: quota, if wired, has to cover this new attempt.
                 if (tryConsumeQuota != null && !tryConsumeQuota())
                 {
                     EmitAttemptEvent(retryCount + 2, "denied");

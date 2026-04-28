@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using OpenTelemetry;
 
@@ -56,6 +57,17 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
             FlushExpiredLocked();
 
             var traceId = data.TraceId;
+
+            // A late span (one arriving after the trace's keep/drop has been decided)
+            // must not seed a fresh buffer entry under the same TraceId. Doing so
+            // would leak memory and could ship the trace twice if it had been Kept.
+            if (_decisions.TryGetValue(traceId, out var prior))
+            {
+                if (prior == TailSamplingDecision.Kept && _next is not null)
+                    _next.OnEnd(data);
+                return;
+            }
+
             if (!_buffers.TryGetValue(traceId, out var buffer))
             {
                 if (_buffers.Count >= _bufferCap)
@@ -79,6 +91,87 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
                 buffer.RootEndTime = _now();
             }
         }
+    }
+
+    /// <summary>
+    /// Number of traces currently buffered awaiting a decision. Useful for tests and
+    /// for confirming buffer drain on shutdown / force-flush.
+    /// </summary>
+    public int BufferedTraceCount
+    {
+        get { lock (_lock) return _buffers.Count; }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Decides every still-buffered trace by applying the standard keep/drop rules,
+    /// then asks the downstream processor (if any) to flush. Without this override,
+    /// buffered traces would be dropped silently when the SDK tears down.
+    /// </remarks>
+    protected override bool OnForceFlush(int timeoutMilliseconds)
+        => FlushAllBuffered(timeoutMilliseconds);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Same gesture as <see cref="OnForceFlush"/>: decide every still-buffered trace
+    /// and propagate the shutdown to the downstream processor. The base class only
+    /// invokes this once, so per-trace decisions are recorded normally in the
+    /// decision cache.
+    /// </remarks>
+    protected override bool OnShutdown(int timeoutMilliseconds)
+        => FlushAllBuffered(timeoutMilliseconds);
+
+    private bool FlushAllBuffered(int timeoutMilliseconds)
+    {
+        DateTime? deadline = timeoutMilliseconds == Timeout.Infinite
+            ? null
+            : _now().AddMilliseconds(timeoutMilliseconds);
+
+        List<Activity>? toForward = null;
+
+        lock (_lock)
+        {
+            // Snapshot keys first so we can mutate _buffers inside the loop.
+            var traceIds = new ActivityTraceId[_buffers.Count];
+            int idx = 0;
+            foreach (var key in _buffers.Keys) traceIds[idx++] = key;
+
+            foreach (var traceId in traceIds)
+            {
+                if (deadline.HasValue && _now() >= deadline.Value)
+                    return false;
+
+                if (!_buffers.Remove(traceId, out var buffer)) continue;
+                _insertionOrder.Remove(traceId);
+
+                bool keep = ShouldKeep(buffer.Activities, traceId);
+                _decisions[traceId] = keep ? TailSamplingDecision.Kept : TailSamplingDecision.Dropped;
+
+                if (keep)
+                {
+                    (toForward ??= new()).AddRange(buffer.Activities);
+                }
+            }
+        }
+
+        if (toForward is not null && _next is not null)
+        {
+            foreach (var act in toForward)
+            {
+                if (deadline.HasValue && _now() >= deadline.Value) return false;
+                _next.OnEnd(act);
+            }
+        }
+
+        if (_next is null) return true;
+
+        if (deadline.HasValue)
+        {
+            int remaining = (int)Math.Max(0, (deadline.Value - _now()).TotalMilliseconds);
+            return _next.ForceFlush(remaining);
+        }
+
+        return _next.ForceFlush();
     }
 
     /// <summary>
@@ -151,8 +244,14 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 
         if (sawError || sawCascade || sawFailedRepair) return true;
 
-        // Default fallback: deterministic 25% by TraceId hash.
-        return (traceId.GetHashCode() & 0xFFFF) < 0xFFFF * SampleRatio;
+        // Default fallback: deterministic 25% sample using the raw TraceId bytes.
+        // .NET's Object.GetHashCode is not guaranteed stable across processes or
+        // framework versions, so a hash-based sample built on it would land
+        // differently for the same TraceId in a multi-process pipeline.
+        Span<byte> bytes = stackalloc byte[16];
+        traceId.CopyTo(bytes);
+        uint stable = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        return (stable & 0xFFFF) < 0xFFFF * SampleRatio;
     }
 
     private sealed class TraceBuffer

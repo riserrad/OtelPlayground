@@ -124,6 +124,77 @@ public class TailSamplingProcessorTests : IDisposable
     }
 
     [Fact]
+    public void OnShutdown_FlushesBufferedTraces()
+    {
+        var clock = new TestClock();
+        var processor = new TailSamplingProcessor(graceWindow: TimeSpan.FromMilliseconds(200), nowProvider: () => clock.Now);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error);
+        root.Stop();
+        processor.OnEnd(root);
+
+        // Without flushing, the trace is still Pending because the test clock has not
+        // advanced past the grace window.
+        Assert.Equal(TailSamplingDecision.Pending, processor.GetDecision(root.TraceId));
+        Assert.Equal(1, processor.BufferedTraceCount);
+
+        // Shutdown forces a decision on every still-buffered trace.
+        Assert.True(processor.Shutdown());
+
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+    }
+
+    [Fact]
+    public void OnEnd_AfterDecision_DoesNotRebuffer()
+    {
+        var clock = new TestClock();
+        var processor = new TailSamplingProcessor(graceWindow: TimeSpan.FromMilliseconds(200), nowProvider: () => clock.Now);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error);
+        root.Stop();
+        processor.OnEnd(root);
+
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        processor.FlushExpired();
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+
+        // A child span on the same TraceId arrives after the keep/drop decision lands.
+        using var lateChild = Source.StartActivity(
+            "LateChild", ActivityKind.Internal,
+            parentContext: new ActivityContext(root.TraceId, ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded));
+        Assert.NotNull(lateChild);
+        lateChild!.Stop();
+        processor.OnEnd(lateChild);
+
+        // The processor must not seed a fresh buffer entry for this TraceId, otherwise
+        // a long-lived process would leak memory and a Kept trace would ship twice.
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+    }
+
+    [Fact]
+    public void DeterministicKeepRule_StableAcrossInstances()
+    {
+        var traceIds = Enumerable.Range(0, 200).Select(_ => ActivityTraceId.CreateRandom()).ToArray();
+
+        var decisionsA = traceIds.Select(id =>
+            TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), id)).ToArray();
+        var decisionsB = traceIds.Select(id =>
+            TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), id)).ToArray();
+
+        Assert.Equal(decisionsA, decisionsB);
+
+        // The rule must also produce a non-trivial split. If every decision was the same
+        // value, an unstable hash could pass the equality check by accident.
+        Assert.Contains(true, decisionsA);
+        Assert.Contains(false, decisionsA);
+    }
+
+    [Fact]
     public void RootSpanEndPlusGrace_TriggersFlush()
     {
         var clock = new TestClock();

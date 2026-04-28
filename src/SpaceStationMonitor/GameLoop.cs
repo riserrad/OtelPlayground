@@ -95,9 +95,10 @@ public sealed class GameLoop
 
                 bool isBugActive = _repairSystem.IsBugActive;
 
-                // D2 sidecar (dev-design §0.5, Path 2). Idempotent per-cycle —
-                // the IsBugActive flip drives the override on, deactivation drives it off.
-                // Reuses SamplingBlindSpotStrategy.HostileSampler — no per-cycle alloc.
+                // SamplingBlindSpot needs the cycle loop to wire its hostile sampler into the
+                // ParentBased sampler each tick. Toggling on/off in lock-step with IsBugActive
+                // makes activation observable as a sudden trace-volume drop. The HostileSampler
+                // is a static singleton, so this assignment does not allocate per cycle.
                 if (_sampler is not null)
                 {
                     _sampler.OverrideSampler =
@@ -158,8 +159,10 @@ public sealed class GameLoop
                             string.Join(",", cascade.AffectedSubsystems)));
 
                     _station.CascadeCount++;
-                    // IsAllDataRequested is the sampler decision, not a metric readback —
-                    // PM ratified this read for the SamplingBlindSpot reveal (dev-design §0.4).
+                    // IsAllDataRequested is the sampler's keep decision for this span. Reading
+                    // it here counts how many cascade traces survived sampling, which is the
+                    // gameplay reveal for SamplingBlindSpot (the lie is the ratio of recorded
+                    // cascades, not the cascades themselves).
                     if (cascadeActivity != null && cascadeActivity.IsAllDataRequested)
                         _station.CascadesTracedCount++;
 
@@ -224,9 +227,9 @@ public sealed class GameLoop
                 {
                     if (HandleKeyPress(key))
                     {
-                        // Q was pressed — _onQuit has cancelled the upstream shutdown source.
-                        // Exit the polling loop immediately; the caller's outer loop will see
-                        // shutdownToken.IsCancellationRequested and break out of the cycle loop.
+                        // Q was pressed; _onQuit has cancelled the upstream shutdown source.
+                        // Exit the polling loop immediately so the caller's outer loop sees
+                        // shutdownToken.IsCancellationRequested and breaks out of the cycle loop.
                         return;
                     }
                 }
@@ -255,9 +258,8 @@ public sealed class GameLoop
 
             case 'Q':
                 // Linked-token sources only propagate parent→child, so cancelling waitCts here
-                // would NOT signal the root shutdown CTS — the cycle loop would resume into the
-                // next tick. The fix: route through an upstream callback that the caller (Program.cs)
-                // wires to its own shutdownCts.Cancel().
+                // would NOT signal the root shutdown CTS; the cycle loop would resume into the
+                // next tick. Route through an upstream callback wired to shutdownCts.Cancel().
                 _onQuit?.Invoke();
                 return true;
         }
@@ -266,7 +268,7 @@ public sealed class GameLoop
 
     // Test seam: when _keyReader is non-null (set by tests), we read from that delegate
     // instead of touching Console.KeyAvailable / Console.ReadKey. In production both call
-    // sites end up at the real Console — same behaviour, plus tests can pump keys.
+    // sites end up at the real Console; tests use the seam to pump synthetic keys.
     private bool TryReadKey(out char key)
     {
         if (_keyReader != null)

@@ -71,8 +71,9 @@ if (!testConfig.TestMode)
     }
 }
 
-// ── Game components — clocks (Station.StartTime, strategy start time)
-//    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
+// ── Game components ─────────────────────────────────────────────────────────
+// Clocks (Station.StartTime, strategy start time) capture DateTime.UtcNow at
+// construction, so these must be built AFTER the splash blocks for input.
 var station = new Station();
 var random = new Random();
 var subsystemNames = station.Subsystems.Select(s => s.Name).ToArray();
@@ -85,7 +86,7 @@ try
 }
 catch (InvalidOperationException ex)
 {
-    // Narrow catch — the only InvalidOperationException BugSelector throws is
+    // Narrow catch: the only InvalidOperationException BugSelector throws is
     // the unknown-BUG_STRATEGY one. Exit 2 so scripts can distinguish from
     // normal game exit (0) and a crash (nonzero other than 2).
     Console.Error.WriteLine(ex.Message);
@@ -102,7 +103,7 @@ var sampler = new HullThresholdSampler(() => station.HullIntegrity);
 
 // ── OTel setup ──────────────────────────────────────────────────────────────
 // bug.strategy goes on the resource so it's filterable across all signals
-// (traces, metrics, logs) — not just on the StationCycle span.
+// (traces, metrics, logs), not just on the StationCycle span.
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(Telemetry.ServiceName)
     .AddAttributes(new[] { new KeyValuePair<string, object>("bug.strategy", strategy.Name) });
@@ -157,7 +158,7 @@ logger.LogInformation("Bug strategy: {Name}, target: {Target}",
     strategy.Name, strategy.BugTargetSubsystem);
 
 // ── Run the game loop ───────────────────────────────────────────────────────
-// onQuit is wired to the root shutdown CTS — child linked tokens inside the loop's per-cycle
+// onQuit is wired to the root shutdown CTS. Child linked tokens inside the loop's per-cycle
 // wait don't propagate cancellation back up here, so the Q handler needs an upstream hook.
 var gameLoop = new GameLoop(
     station, repairSystem, eventEngine, cascadeEngine, display, random, logger, strategy, testConfig,
