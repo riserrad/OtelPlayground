@@ -1,6 +1,5 @@
 using SpaceStationMonitor;
 using SpaceStationMonitor.BugStrategies;
-using SpaceStationMonitor.Tests.TestHelpers;
 using Xunit;
 
 namespace SpaceStationMonitor.Tests;
@@ -32,7 +31,7 @@ public class StickyCascadeMultiplierStrategyTests
     {
         var station = new Station();
         station.Subsystems[0].Health = 20; // Oxygen critical
-        var strategy = new NoOpBugStrategy();
+        var strategy = new NoOpBugStrategy("Oxygen");
         var engine = new CascadeEngine(strategy);
 
         engine.CheckAndApplyCascades(station, isBugActive: false);

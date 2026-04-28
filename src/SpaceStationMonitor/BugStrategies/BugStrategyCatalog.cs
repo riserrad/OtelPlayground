@@ -4,7 +4,7 @@ public static class BugStrategyCatalog
 {
     // activationDelay = null lets each strategy use its BugStrategyBase default
     // (currently 2 minutes). A non-null value overrides every strategy in the run
-    // uniformly — used by the BUG_ACTIVATION_DELAY_MS env-var path so QA / CI can
+    // uniformly. Used by the BUG_ACTIVATION_DELAY_MS env-var path so QA / CI can
     // exercise post-bug behavior without sitting through the production-tuned wait.
     public static IBugStrategy[] All(
         string bugTarget,

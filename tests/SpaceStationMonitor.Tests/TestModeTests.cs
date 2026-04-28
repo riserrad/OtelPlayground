@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SpaceStationMonitor.BugStrategies;
-using SpaceStationMonitor.Tests.TestHelpers;
+using SpaceStationMonitor.Sampling;
 using Xunit;
 
 namespace SpaceStationMonitor.Tests;
@@ -33,6 +33,17 @@ public class TestModeTests
         Assert.True(config.TestMode);
         Assert.Equal(5, config.MaxCycles);
         Assert.Equal(TimeSpan.FromMilliseconds(50), config.TickInterval);
+    }
+
+    [Fact]
+    public void TestMode_SkipsSplash_DefaultsModeAndDifficulty()
+    {
+        var config = new TestModeConfig(TestMode: true, MaxCycles: null, TickInterval: null);
+
+        var (mode, difficulty) = SplashDefaults.Resolve(config);
+
+        Assert.Equal(GameMode.Learning, mode);
+        Assert.Equal(Difficulty.Normal, difficulty);
     }
 
     [Fact]
@@ -102,7 +113,7 @@ public class TestModeTests
         using var rootCts = new CancellationTokenSource();
 
         var station = new Station();
-        var strategy = new NoOpBugStrategy();
+        var strategy = new NoOpBugStrategy("Oxygen");
         var repairSystem = new RepairSystem(strategy);
         var eventEngine = new EventEngine();
         var cascadeEngine = new CascadeEngine(strategy);
@@ -159,7 +170,7 @@ public class TestModeTests
     }
 
     private static (GameLoop loop, Station station) BuildLoop(TestModeConfig config) =>
-        BuildLoopWithStrategy(new NoOpBugStrategy(), config);
+        BuildLoopWithStrategy(new NoOpBugStrategy("Oxygen"), config);
 
     private static (GameLoop loop, Station station) BuildLoopWithStrategy(
         IBugStrategy strategy, TestModeConfig config)

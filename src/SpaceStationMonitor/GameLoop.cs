@@ -29,6 +29,7 @@ public sealed class GameLoop
     private readonly Action? _onQuit;
     private readonly Func<char?>? _keyReader;
     private readonly HullThresholdSampler? _sampler;
+    private readonly SampleRegimeIndicator? _indicator;
 
     private int _selectedSubsystem;
 
@@ -45,7 +46,8 @@ public sealed class GameLoop
         AchievementSystem? achievementSystem = null,
         Action? onQuit = null,
         Func<char?>? keyReader = null,
-        HullThresholdSampler? sampler = null)
+        HullThresholdSampler? sampler = null,
+        SampleRegimeIndicator? indicator = null)
     {
         _station = station;
         _repairSystem = repairSystem;
@@ -60,11 +62,12 @@ public sealed class GameLoop
         _onQuit = onQuit;
         _keyReader = keyReader;
         _sampler = sampler;
+        _indicator = indicator;
     }
 
     public async Task RunAsync(CancellationToken shutdownToken)
     {
-        _display.Render(_station, _selectedSubsystem, _sampler);
+        _display.Render(_station, _selectedSubsystem, _indicator);
 
         try
         {
@@ -204,7 +207,7 @@ public sealed class GameLoop
                 _logger.LogInformation("Station cycle {Cycle} complete — hull integrity {Hull:F1}%",
                     _station.CycleCount, _station.HullIntegrity);
 
-                _display.Render(_station, _selectedSubsystem, _sampler);
+                _display.Render(_station, _selectedSubsystem, _indicator);
 
                 if (_testConfig.MaxCycles is int max && _station.CycleCount >= max) break;
             }
@@ -246,10 +249,10 @@ public sealed class GameLoop
     {
         switch (key)
         {
-            case '1': _selectedSubsystem = 0; _display.Render(_station, _selectedSubsystem, _sampler); break;
-            case '2': _selectedSubsystem = 1; _display.Render(_station, _selectedSubsystem, _sampler); break;
-            case '3': _selectedSubsystem = 2; _display.Render(_station, _selectedSubsystem, _sampler); break;
-            case '4': _selectedSubsystem = 3; _display.Render(_station, _selectedSubsystem, _sampler); break;
+            case '1': _selectedSubsystem = 0; _display.Render(_station, _selectedSubsystem, _indicator); break;
+            case '2': _selectedSubsystem = 1; _display.Render(_station, _selectedSubsystem, _indicator); break;
+            case '3': _selectedSubsystem = 2; _display.Render(_station, _selectedSubsystem, _indicator); break;
+            case '4': _selectedSubsystem = 3; _display.Render(_station, _selectedSubsystem, _indicator); break;
 
             case 'R': HandleRepair(); break;
             case 'E': HandleEmergencyPower(); break;
@@ -301,7 +304,7 @@ public sealed class GameLoop
                 new KeyValuePair<string, object?>("subsystem.name", sub.Name));
             _logger.LogInformation("Repair denied on {Name}: quota exhausted this cycle", sub.Name);
             _display.SetRepairMessage("No repairs left this cycle — wait for next tick");
-            _display.Render(_station, _selectedSubsystem, _sampler);
+            _display.Render(_station, _selectedSubsystem, _indicator);
             return;
         }
 
@@ -358,7 +361,7 @@ public sealed class GameLoop
 
         _display.SetRepairMessage(
             $"Repaired {sub.Name}: {currentHealth:F0}% → {expectedHealth:F0}%");
-        _display.Render(_station, _selectedSubsystem, _sampler);
+        _display.Render(_station, _selectedSubsystem, _indicator);
     }
 
     private void HandleEmergencyPower()
@@ -374,6 +377,6 @@ public sealed class GameLoop
         {
             _display.SetRepairMessage("No emergency power remaining!");
         }
-        _display.Render(_station, _selectedSubsystem, _sampler);
+        _display.Render(_station, _selectedSubsystem, _indicator);
     }
 }
