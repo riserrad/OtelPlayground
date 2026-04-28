@@ -81,8 +81,9 @@ else
     modeActivationDelay = TimeSpan.FromMinutes(1);
 }
 
-// ── Game components — clocks (Station.StartTime, strategy start time)
-//    capture DateTime.UtcNow at construction, so they must be built AFTER the splash.
+// ── Game components ─────────────────────────────────────────────────────────
+// Clocks (Station.StartTime, strategy start time) capture DateTime.UtcNow at
+// construction, so these must be built AFTER the splash blocks for input.
 var station = new Station(repairsPerCycle, degradationMultiplier);
 var random = new Random();
 var subsystemNames = station.Subsystems.Select(s => s.Name).ToArray();
@@ -104,7 +105,7 @@ else
     }
     catch (InvalidOperationException ex)
     {
-        // Narrow catch — the only InvalidOperationException BugSelector throws is
+        // Narrow catch: the only InvalidOperationException BugSelector throws is
         // the unknown-BUG_STRATEGY one. Exit 2 so scripts can distinguish from
         // normal game exit (0) and a crash (nonzero other than 2).
         Console.Error.WriteLine(ex.Message);
