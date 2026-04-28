@@ -177,21 +177,31 @@ public class TailSamplingProcessorTests : IDisposable
     }
 
     [Fact]
-    public void DeterministicKeepRule_StableAcrossInstances()
+    public void DeterministicKeepRule_GoldenTraceIds()
     {
-        var traceIds = Enumerable.Range(0, 200).Select(_ => ActivityTraceId.CreateRandom()).ToArray();
+        // Hard-coded TraceIds with hand-computed expected outcomes. A test built from
+        // CreateRandom() trace ids would also pass under traceId.GetHashCode() (stable
+        // within a single process), so it would not catch a regression that swapped the
+        // hash source for one not stable across processes or framework versions. These
+        // four ids exercise both keep and drop branches of the 25%-by-low-uint16 rule
+        // and pin the exact inputs/outputs as a regression contract.
+        var goldenCases = new (ActivityTraceId TraceId, bool Expected)[]
+        {
+            (ActivityTraceId.CreateFromString("00000000000000000000000000000001".AsSpan()), true),
+            (ActivityTraceId.CreateFromString("11111111111111111111111111111111".AsSpan()), true),
+            (ActivityTraceId.CreateFromString("89abcdef0123456789abcdef01234567".AsSpan()), false),
+            (ActivityTraceId.CreateFromString("fedcba9876543210fedcba9876543210".AsSpan()), false),
+        };
 
-        var decisionsA = traceIds.Select(id =>
-            TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), id)).ToArray();
-        var decisionsB = traceIds.Select(id =>
-            TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), id)).ToArray();
+        foreach (var (traceId, expected) in goldenCases)
+        {
+            bool actual = TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), traceId);
+            Assert.Equal(expected, actual);
+        }
 
-        Assert.Equal(decisionsA, decisionsB);
-
-        // The rule must also produce a non-trivial split. If every decision was the same
-        // value, an unstable hash could pass the equality check by accident.
-        Assert.Contains(true, decisionsA);
-        Assert.Contains(false, decisionsA);
+        // Guard against a degenerate implementation that always returns the same result.
+        Assert.Contains(goldenCases, c => c.Expected);
+        Assert.Contains(goldenCases, c => !c.Expected);
     }
 
     [Fact]

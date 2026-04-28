@@ -52,6 +52,12 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 
     public override void OnEnd(Activity data)
     {
+        // Forwarding to the downstream processor must happen outside _lock: _next is
+        // external code and may be slow or re-entrant, so holding the lock across the
+        // call increases contention and risks deadlock. Capture the decision under the
+        // lock, exit, then forward if required (mirrors FlushAllBuffered's pattern).
+        bool forwardLateSpan = false;
+
         lock (_lock)
         {
             FlushExpiredLocked();
@@ -63,33 +69,38 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
             // would leak memory and could ship the trace twice if it had been Kept.
             if (_decisions.TryGetValue(traceId, out var prior))
             {
-                if (prior == TailSamplingDecision.Kept && _next is not null)
-                    _next.OnEnd(data);
-                return;
+                forwardLateSpan = prior == TailSamplingDecision.Kept && _next is not null;
             }
-
-            if (!_buffers.TryGetValue(traceId, out var buffer))
+            else
             {
-                if (_buffers.Count >= _bufferCap)
+                if (!_buffers.TryGetValue(traceId, out var buffer))
                 {
-                    var oldestNode = _insertionOrder.First;
-                    if (oldestNode is not null)
+                    if (_buffers.Count >= _bufferCap)
                     {
-                        _insertionOrder.RemoveFirst();
-                        DecideAndForwardLocked(oldestNode.Value);
+                        var oldestNode = _insertionOrder.First;
+                        if (oldestNode is not null)
+                        {
+                            _insertionOrder.RemoveFirst();
+                            DecideAndForwardLocked(oldestNode.Value);
+                        }
                     }
+                    buffer = new TraceBuffer();
+                    _buffers[traceId] = buffer;
+                    _insertionOrder.AddLast(traceId);
                 }
-                buffer = new TraceBuffer();
-                _buffers[traceId] = buffer;
-                _insertionOrder.AddLast(traceId);
-            }
 
-            buffer.Activities.Add(data);
-            if (data.Parent is null)
-            {
-                buffer.RootSeen = true;
-                buffer.RootEndTime = _now();
+                buffer.Activities.Add(data);
+                if (data.Parent is null)
+                {
+                    buffer.RootSeen = true;
+                    buffer.RootEndTime = _now();
+                }
             }
+        }
+
+        if (forwardLateSpan)
+        {
+            _next!.OnEnd(data);
         }
     }
 
@@ -109,19 +120,21 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     /// buffered traces would be dropped silently when the SDK tears down.
     /// </remarks>
     protected override bool OnForceFlush(int timeoutMilliseconds)
-        => FlushAllBuffered(timeoutMilliseconds);
+        => FlushAllBuffered(timeoutMilliseconds, isShutdown: false);
 
     /// <inheritdoc />
     /// <remarks>
-    /// Same gesture as <see cref="OnForceFlush"/>: decide every still-buffered trace
-    /// and propagate the shutdown to the downstream processor. The base class only
-    /// invokes this once, so per-trace decisions are recorded normally in the
-    /// decision cache.
+    /// Same drain gesture as <see cref="OnForceFlush"/>, but propagates a true
+    /// shutdown to the downstream processor so its own teardown logic (releasing
+    /// network handles, finalizing background workers) runs. Calling
+    /// <see cref="BaseProcessor{T}.ForceFlush(int)"/> here would leave that cleanup
+    /// undone. The base class only invokes this once, so per-trace decisions are
+    /// recorded normally in the decision cache.
     /// </remarks>
     protected override bool OnShutdown(int timeoutMilliseconds)
-        => FlushAllBuffered(timeoutMilliseconds);
+        => FlushAllBuffered(timeoutMilliseconds, isShutdown: true);
 
-    private bool FlushAllBuffered(int timeoutMilliseconds)
+    private bool FlushAllBuffered(int timeoutMilliseconds, bool isShutdown)
     {
         DateTime? deadline = timeoutMilliseconds == Timeout.Infinite
             ? null
@@ -168,10 +181,10 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         if (deadline.HasValue)
         {
             int remaining = (int)Math.Max(0, (deadline.Value - _now()).TotalMilliseconds);
-            return _next.ForceFlush(remaining);
+            return isShutdown ? _next.Shutdown(remaining) : _next.ForceFlush(remaining);
         }
 
-        return _next.ForceFlush();
+        return isShutdown ? _next.Shutdown() : _next.ForceFlush();
     }
 
     /// <summary>
