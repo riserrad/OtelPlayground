@@ -7,12 +7,11 @@ namespace SpaceStationMonitor.BugStrategies;
 /// surfaces when an operator filters a metric or trace by attribute key in the dashboard
 /// and gets roughly half the rows they expect.
 ///
-/// Targeted instruments are the high-frequency subsystem-keyed emission points: the
-/// <c>station.cycles.total</c> counter (in practice carries no <c>subsystem.name</c>, so
-/// the rename is a no-op there; the wiring is symmetric across all three sites), the
-/// <c>station.subsystem.health</c> observable gauge, and the <c>SubsystemTick</c> span
-/// tag set. Every variant of the <c>subsystem</c> key actually emitted is recorded in
-/// <see cref="ObservedKeys"/> so the game-over reveal can report the count.
+/// Targeted instruments are the two subsystem-keyed emission points that actually carry
+/// a <c>subsystem.name</c> tag: the <c>station.subsystem.health</c> observable gauge and
+/// the <c>SubsystemTick</c> span tag set. Every variant of the <c>subsystem</c> key
+/// actually emitted is recorded in <see cref="ObservedKeys"/> so the game-over reveal
+/// can report the count.
 /// </summary>
 public sealed class AttributeKeyDriftStrategy : BugStrategyBase
 {
@@ -21,7 +20,6 @@ public sealed class AttributeKeyDriftStrategy : BugStrategyBase
 
     private static readonly HashSet<string> TargetedInstruments = new()
     {
-        "station.cycles.total",
         "station.subsystem.health",
         "SubsystemTick",
     };

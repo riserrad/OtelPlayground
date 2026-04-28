@@ -207,10 +207,7 @@ public sealed class GameLoop
                     _display.SetEvent(null);
                 }
 
-                var cyclesTags = _strategy
-                    .MutateTags("station.cycles.total", Array.Empty<KeyValuePair<string, object?>>())
-                    .ToArray();
-                Telemetry.CyclesTotal.Add(_strategy.CycleCounterIncrement(), cyclesTags);
+                Telemetry.CyclesTotal.Add(_strategy.CycleCounterIncrement());
                 _station.EndCycle();
                 _achievementSystem?.CheckAndFire(_station, cycleActivity, _logger, _display);
                 cycleActivity?.SetTag("hull.integrity", Math.Round(_station.HullIntegrity, 1));
