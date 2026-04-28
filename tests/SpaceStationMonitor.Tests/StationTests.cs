@@ -159,7 +159,7 @@ public class StationTests
     [Fact]
     public void DegradeSubsystem_RespectsDegradationMultiplier()
     {
-        // Mean ratio is ~3.14, not 4 — variance is additive (offset +0.4), so it
+        // Mean ratio is ~3.14, not 4. Variance is additive (offset +0.4), so it
         // dilutes the multiplicative effect. Asymmetric window reflects per-run noise.
         var stationLow = new Station(repairsPerCycle: 3, degradationMultiplier: 0.5);
         var stationHigh = new Station(repairsPerCycle: 3, degradationMultiplier: 2.0);

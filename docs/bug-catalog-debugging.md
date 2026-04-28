@@ -6,7 +6,7 @@ This cheat sheet is a walkthrough, not an answer key. For each bug it nudges you
 
 The splash gate at game start asks whether you want to **just play** or to **play and learn Observability**. Just Playing runs the station with no bug active so you can focus on the game itself. Learning mode is where this catalog applies: a bug strategy is picked (random by default, override via `BUG_STRATEGY`), and the bug only shows up in telemetry. Pick mode 2 if you want anything below to matter.
 
-After the mode pick, the splash asks for a difficulty: **Tutorial**, **Normal**, **Hard**, or **Expert**. Difficulty is orthogonal to mode — it tunes the gameplay challenge (repairs per cycle, degradation pace, event frequency) without changing whether a bug is active or how telemetry is sampled. Pick whichever difficulty fits the time you have; the bug catalog walkthroughs apply identically across all four.
+After the mode pick, the splash asks for a difficulty: **Tutorial**, **Normal**, **Hard**, or **Expert**. Difficulty is orthogonal to mode. It tunes the gameplay challenge (repairs per cycle, degradation pace, event frequency) without changing whether a bug is active or how telemetry is sampled. Pick whichever difficulty fits the time you have; the bug catalog walkthroughs apply identically across all four.
 
 ## Picking a strategy
 
