@@ -10,9 +10,9 @@ After the mode pick, the splash asks for a difficulty: **Tutorial**, **Normal**,
 
 ## Picking a strategy
 
-By default, one of the six strategies below is picked at random when the game starts. If you want to control it:
+By default, one of the strategies below is picked at random when the game starts. If you want to control it:
 
-- `BUG_STRATEGY=<name>` forces a specific strategy. Case-insensitive. Valid names: `LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`, `SamplingBlindSpot`. Unknown names exit with code 2 and print the valid list to stderr.
+- `BUG_STRATEGY=<name>` forces a specific strategy. Case-insensitive. Valid names: `LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`, `SamplingBlindSpot`, `OrphanSpan`. Unknown names exit with code 2 and print the valid list to stderr.
 - `BUG_STRATEGY_SEED=<int>` seeds the RNG that picks both the target subsystem and the strategy. Same seed, same `(target, strategy)` pair. Only used when `BUG_STRATEGY` is unset.
 
 On startup the game logs `Bug strategy: <Name>, target: <Target>` so you know what was chosen. The mechanics of each strategy stay hidden, since figuring those out is the point.
@@ -136,3 +136,25 @@ A head sampler can never decide on a tag it has not seen yet. That is the whole 
 4. If exemplars are missing on a bucket you expected to find one in, check that the head sampler at game start was not `AlwaysOff` and that the trace was not dropped by tail sampling.
 
 *Teaches: head and tail sampling answer different questions. Exemplars are the metric → trace bridge that keeps a low sample rate from hiding the trace you actually want. Production tail sampling lives in the collector; the in-game implementation is a single-process simulation.*
+
+---
+
+## Context propagation
+
+A trace can span multiple processes. Each process sees only its own slice; the trace's true root may live in an upstream service the local process never observes. .NET surfaces three different "parent" concepts on `Activity` that get conflated all the time:
+
+- `Activity.Parent`: the **in-process** parent reference. Always null for an activity started without an in-process parent, even when a remote parent was propagated in.
+- `Activity.ParentSpanId`: the propagated parent SpanId. Default (all-zero) if and only if there is no parent at all. Non-default whenever a parent context was supplied, in-process or remote.
+- `Activity.HasRemoteParent`: true when the parent context arrived from outside this process (typically via a W3C `traceparent` header). False for in-process parenting.
+
+**Symptom:** trace root Activity has a non-default `parent_span_id` but the parent Activity isn't in the trace.
+
+**Look at:** is this the first process in the trace path, or is upstream supposed to inject a `traceparent` header? Inspect `HasRemoteParent` / `parent_span_id` on the root Activity.
+
+**Likely cause:** the activity was started with a remote parent context (correct propagation from an upstream service). The local process is a downstream service in a multi-process trace.
+
+**Common bug:** tail samplers, exporters, or correlation middleware that treat `Parent is null` as "this is THE trace root". That assumption holds in a single-process app and breaks at every internal service in a multi-process system. The remote-parented activity gets flushed prematurely, before its in-process children finish, because the buffer thinks it has seen the trace's root. Use `Parent is null && ParentSpanId == default` to test for a true local root.
+
+**Completion signal for cross-process traces.** Root-end + grace works in a single-process app because every trace's root is observable locally. A remote-parented trace never sees its true root end, so the buffer needs a different completion signal. The one this codebase ships is an inactivity timeout: when no activity has been added to a buffered trace for a configurable window, flush. Real production tail samplers in the OpenTelemetry Collector use cross-process trace assembly (and a timeout fallback) for the same reason.
+
+*Teaches: `Parent is null` is not the same as 'trace root' once W3C propagation is in play.*

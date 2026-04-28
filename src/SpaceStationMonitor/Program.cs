@@ -101,7 +101,8 @@ else
     {
         (bugTarget, strategy) = BugSelector.Select(
             Environment.GetEnvironmentVariable, subsystemNames,
-            bugActivationDelay ?? modeActivationDelay);
+            bugActivationDelay ?? modeActivationDelay,
+            cycleProvider: () => station.CycleCount + 1);
     }
     catch (InvalidOperationException ex)
     {
@@ -271,6 +272,10 @@ if (gameMode == GameMode.Learning)
     Console.WriteLine($"  Bug strategy: {strategy.Name}  (target: {strategy.BugTargetSubsystem})");
     Console.WriteLine($"  Cascade failures: {station.CascadeCount,-3}  |   Traces captured: {station.CascadesTracedCount,-3}");
     Console.WriteLine("  See docs/bug-catalog-debugging.md for the bug catalog cheat-sheet.");
+    if (repairSystem.Strategy is OrphanSpanStrategy orphan && orphan.InjectedCount > 0)
+    {
+        Console.WriteLine($"  Telemetry root-detection: {orphan.InjectedCount} synthetic remote-parented cycles");
+    }
 }
 Console.ResetColor();
 

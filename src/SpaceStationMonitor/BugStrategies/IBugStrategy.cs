@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace SpaceStationMonitor.BugStrategies;
 
 /// <summary>
@@ -16,6 +18,14 @@ public interface IBugStrategy
     bool ShouldResetCascadeMultipliers();
     Subsystem RedirectDegradationTarget(Subsystem requested, IReadOnlyList<Subsystem> all);
     TimeSpan? RepairDelay(Subsystem sub);
+
+    /// <summary>
+    /// Optional hook letting a strategy supply a synthetic remote-parent context for the
+    /// per-cycle root activity. Returning non-null causes the cycle activity to be started
+    /// with that <see cref="ActivityContext"/> as its parent; null leaves cycle parenting
+    /// untouched (default behavior).
+    /// </summary>
+    ActivityContext? OverrideStationCycleParent();
 }
 
 public abstract class BugStrategyBase : IBugStrategy
@@ -39,4 +49,5 @@ public abstract class BugStrategyBase : IBugStrategy
     public virtual bool ShouldResetCascadeMultipliers() => true;
     public virtual Subsystem RedirectDegradationTarget(Subsystem requested, IReadOnlyList<Subsystem> all) => requested;
     public virtual TimeSpan? RepairDelay(Subsystem sub) => null;
+    public virtual ActivityContext? OverrideStationCycleParent() => null;
 }

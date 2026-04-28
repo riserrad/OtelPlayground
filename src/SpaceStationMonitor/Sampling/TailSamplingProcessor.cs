@@ -25,11 +25,13 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 {
     public const int DefaultBufferCap = 1000;
     public static readonly TimeSpan DefaultGraceWindow = TimeSpan.FromMilliseconds(200);
+    public static readonly TimeSpan DefaultInactivityTimeout = TimeSpan.FromSeconds(2);
     private const double SampleRatio = 0.25;
 
     private readonly BaseProcessor<Activity>? _next;
     private readonly int _bufferCap;
     private readonly TimeSpan _graceWindow;
+    private readonly TimeSpan _inactivityTimeout;
     private readonly Func<DateTime> _now;
 
     private readonly object _lock = new();
@@ -41,12 +43,18 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         BaseProcessor<Activity>? next = null,
         int bufferCap = DefaultBufferCap,
         TimeSpan? graceWindow = null,
+        TimeSpan? inactivityTimeout = null,
         Func<DateTime>? nowProvider = null)
     {
         if (bufferCap <= 0) throw new ArgumentOutOfRangeException(nameof(bufferCap));
+        if (graceWindow is { } gw && gw <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(graceWindow));
+        if (inactivityTimeout is { } it && it <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(inactivityTimeout));
         _next = next;
         _bufferCap = bufferCap;
         _graceWindow = graceWindow ?? DefaultGraceWindow;
+        _inactivityTimeout = inactivityTimeout ?? DefaultInactivityTimeout;
         _now = nowProvider ?? (() => DateTime.UtcNow);
     }
 
@@ -92,7 +100,13 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
                 }
 
                 buffer.Activities.Add(data);
-                if (data.Parent is null)
+                buffer.LastActivityTime = _now();
+                // True local root: no in-process parent AND no propagated remote parent.
+                // A non-default ParentSpanId (set via W3C traceparent on a cross-process child)
+                // means this Activity has a remote parent, so the trace's true root lives
+                // elsewhere. Treating it as the local root would flush the buffer prematurely
+                // while later in-process children for the same trace are still arriving.
+                if (data.Parent is null && data.ParentSpanId == default)
                 {
                     buffer.RootSeen = true;
                     buffer.RootEndTime = _now();
@@ -226,7 +240,18 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         List<ActivityTraceId>? toDecide = null;
         foreach (var (id, buf) in _buffers)
         {
+            // Primary path: a local root has ended and the grace window for trailing
+            // in-process children has elapsed.
             if (buf.RootSeen && (now - buf.RootEndTime) >= _graceWindow)
+            {
+                (toDecide ??= new()).Add(id);
+                continue;
+            }
+            // Fallback path: the trace was remote-parented, so this process never
+            // observes a local root; flush once activity has been quiet for the
+            // inactivity timeout. Guarded on !RootSeen to make the contract explicit:
+            // any trace whose local root has been observed belongs to the grace path.
+            if (!buf.RootSeen && (now - buf.LastActivityTime) >= _inactivityTimeout)
                 (toDecide ??= new()).Add(id);
         }
         if (toDecide is null) return;
@@ -288,5 +313,6 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         public readonly List<Activity> Activities = new();
         public bool RootSeen;
         public DateTime RootEndTime;
+        public DateTime LastActivityTime;
     }
 }
