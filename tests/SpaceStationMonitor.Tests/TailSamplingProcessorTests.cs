@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using OpenTelemetry;
 using SpaceStationMonitor.Sampling;
 using Xunit;
 
@@ -225,6 +226,30 @@ public class TailSamplingProcessorTests : IDisposable
         Assert.NotEqual(TailSamplingDecision.Pending, processor.GetDecision(root.TraceId));
     }
 
+    [Fact]
+    public void GraceFlush_ForwardsKeptTracesOutsideLock()
+    {
+        var clock = new TestClock();
+        var observer = new LockObserverProcessor();
+        var processor = new TailSamplingProcessor(
+            next: observer,
+            graceWindow: TimeSpan.FromMilliseconds(200),
+            nowProvider: () => clock.Now);
+        observer.Bind(processor);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error); // forces Kept
+        root.Stop();
+        processor.OnEnd(root);
+
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        processor.FlushExpired();
+
+        Assert.True(observer.OnEndCallCount > 0, "downstream OnEnd was never invoked");
+        Assert.True(observer.AllForwardsSawLockReleased,
+            "downstream OnEnd was invoked while the processor still held _lock");
+    }
+
     private static Activity StartRoot()
     {
         var a = Source.StartActivity("Root", ActivityKind.Internal, parentContext: default);
@@ -236,5 +261,27 @@ public class TailSamplingProcessorTests : IDisposable
     {
         public DateTime Now { get; private set; } = new DateTime(2026, 4, 26, 0, 0, 0, DateTimeKind.Utc);
         public void Advance(TimeSpan delta) => Now = Now.Add(delta);
+    }
+
+    // Downstream double that probes whether _lock is still held when OnEnd runs.
+    // Reading BufferedTraceCount from a thread-pool thread acquires _lock; if the
+    // calling thread still holds it, the probe blocks until timeout. Same-thread
+    // re-entry can't be used here because Monitor is recursive on the owning
+    // thread and would succeed even with the lock held.
+    private sealed class LockObserverProcessor : BaseProcessor<Activity>
+    {
+        private TailSamplingProcessor? _processor;
+        public int OnEndCallCount { get; private set; }
+        public bool AllForwardsSawLockReleased { get; private set; } = true;
+
+        public void Bind(TailSamplingProcessor processor) => _processor = processor;
+
+        public override void OnEnd(Activity data)
+        {
+            OnEndCallCount++;
+            var probe = Task.Run(() => _processor!.BufferedTraceCount);
+            if (!probe.Wait(TimeSpan.FromSeconds(2)))
+                AllForwardsSawLockReleased = false;
+        }
     }
 }

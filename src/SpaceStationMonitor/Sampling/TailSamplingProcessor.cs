@@ -54,13 +54,15 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     {
         // Forwarding to the downstream processor must happen outside _lock: _next is
         // external code and may be slow or re-entrant, so holding the lock across the
-        // call increases contention and risks deadlock. Capture the decision under the
-        // lock, exit, then forward if required (mirrors FlushAllBuffered's pattern).
+        // call increases contention and risks deadlock. Every forwarding site in this
+        // class follows the same shape: accumulate the decision under the lock, exit,
+        // then forward.
         bool forwardLateSpan = false;
+        List<Activity>? toForward = null;
 
         lock (_lock)
         {
-            FlushExpiredLocked();
+            FlushExpiredLocked(ref toForward);
 
             var traceId = data.TraceId;
 
@@ -81,7 +83,7 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
                         if (oldestNode is not null)
                         {
                             _insertionOrder.RemoveFirst();
-                            DecideAndForwardLocked(oldestNode.Value);
+                            DecideLocked(oldestNode.Value, ref toForward);
                         }
                     }
                     buffer = new TraceBuffer();
@@ -97,6 +99,8 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
                 }
             }
         }
+
+        ForwardOutsideLock(toForward);
 
         if (forwardLateSpan)
         {
@@ -193,11 +197,15 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     /// </summary>
     public TailSamplingDecision GetDecision(ActivityTraceId traceId)
     {
+        List<Activity>? toForward = null;
+        TailSamplingDecision result;
         lock (_lock)
         {
-            FlushExpiredLocked();
-            return _decisions.TryGetValue(traceId, out var d) ? d : TailSamplingDecision.Pending;
+            FlushExpiredLocked(ref toForward);
+            result = _decisions.TryGetValue(traceId, out var d) ? d : TailSamplingDecision.Pending;
         }
+        ForwardOutsideLock(toForward);
+        return result;
     }
 
     /// <summary>
@@ -207,10 +215,12 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     /// </summary>
     public void FlushExpired()
     {
-        lock (_lock) FlushExpiredLocked();
+        List<Activity>? toForward = null;
+        lock (_lock) FlushExpiredLocked(ref toForward);
+        ForwardOutsideLock(toForward);
     }
 
-    private void FlushExpiredLocked()
+    private void FlushExpiredLocked(ref List<Activity>? toForward)
     {
         var now = _now();
         List<ActivityTraceId>? toDecide = null;
@@ -223,22 +233,28 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         foreach (var id in toDecide)
         {
             _insertionOrder.Remove(id);
-            DecideAndForwardLocked(id);
+            DecideLocked(id, ref toForward);
         }
     }
 
-    private void DecideAndForwardLocked(ActivityTraceId traceId)
+    private void DecideLocked(ActivityTraceId traceId, ref List<Activity>? toForward)
     {
         if (!_buffers.Remove(traceId, out var buffer)) return;
 
         bool keep = ShouldKeep(buffer.Activities, traceId);
         _decisions[traceId] = keep ? TailSamplingDecision.Kept : TailSamplingDecision.Dropped;
 
-        if (keep && _next is not null)
+        if (keep)
         {
-            foreach (var act in buffer.Activities)
-                _next.OnEnd(act);
+            (toForward ??= new()).AddRange(buffer.Activities);
         }
+    }
+
+    private void ForwardOutsideLock(List<Activity>? toForward)
+    {
+        if (toForward is null || _next is null) return;
+        foreach (var act in toForward)
+            _next.OnEnd(act);
     }
 
     internal static bool ShouldKeep(IEnumerable<Activity> activities, ActivityTraceId traceId)
