@@ -6,7 +6,7 @@ This cheat sheet is a walkthrough, not an answer key. For each bug it nudges you
 
 ## Picking a strategy
 
-By default, one of the six strategies below is picked at random when the game starts. If you want to control it:
+By default, one of the strategies below is picked at random when the game starts. If you want to control it:
 
 - `BUG_STRATEGY=<name>` forces a specific strategy. Case-insensitive. Valid names: `LeakyRepair`, `LatencyInjection`, `SilentCounterCorruption`, `StickyCascadeMultiplier`, `WrongTargetDegradation`, `RetryStorm`, `SamplingBlindSpot`, `OrphanSpan`. Unknown names exit with code 2 and print the valid list to stderr.
 - `BUG_STRATEGY_SEED=<int>` seeds the RNG that picks both the target subsystem and the strategy. Same seed, same `(target, strategy)` pair. Only used when `BUG_STRATEGY` is unset.

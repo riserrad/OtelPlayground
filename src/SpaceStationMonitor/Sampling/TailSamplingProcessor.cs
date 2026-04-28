@@ -46,6 +46,10 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         Func<DateTime>? nowProvider = null)
     {
         if (bufferCap <= 0) throw new ArgumentOutOfRangeException(nameof(bufferCap));
+        if (graceWindow is { } gw && gw <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(graceWindow));
+        if (inactivityTimeout is { } it && it <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(inactivityTimeout));
         _next = next;
         _bufferCap = bufferCap;
         _graceWindow = graceWindow ?? DefaultGraceWindow;
