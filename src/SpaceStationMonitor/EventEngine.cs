@@ -24,13 +24,21 @@ public record StationEvent(
 public class EventEngine
 {
     private readonly Random _random = new();
+    private readonly double _eventChanceMultiplier;
     private static readonly string[] SubsystemNames = ["Oxygen", "Power", "Shields", "Thermal"];
+
+    public EventEngine(double eventChanceMultiplier = 1.0)
+    {
+        _eventChanceMultiplier = eventChanceMultiplier;
+    }
 
     public StationEvent? TryGenerateEvent(bool isBugActive)
     {
         // Pre-bug: ~20% per cycle, uniform severity.
         // Post-bug: ~45% per cycle, biased toward Moderate/Severe (20/40/40).
-        double eventChance = isBugActive ? 0.45 : 0.2;
+        // Difficulty scales the chance via the multiplier; clamp to [0,1] so Expert can't overshoot.
+        double baseChance = isBugActive ? 0.45 : 0.2;
+        double eventChance = Math.Clamp(baseChance * _eventChanceMultiplier, 0.0, 1.0);
         if (_random.NextDouble() > eventChance)
             return null;
 

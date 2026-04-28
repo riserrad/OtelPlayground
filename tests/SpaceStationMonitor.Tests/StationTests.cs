@@ -155,4 +155,65 @@ public class StationTests
         station.StartNewCycle(isBugActive: false);
         Assert.Equal(1, station.RepairsRemainingThisCycle);
     }
+
+    [Fact]
+    public void DegradeSubsystem_RespectsDegradationMultiplier()
+    {
+        // Mean ratio is ~3.14, not 4. Variance is additive (offset +0.4), so it
+        // dilutes the multiplicative effect. Asymmetric window reflects per-run noise.
+        var stationLow = new Station(repairsPerCycle: 3, degradationMultiplier: 0.5);
+        var stationHigh = new Station(repairsPerCycle: 3, degradationMultiplier: 2.0);
+        stationLow.StartNewCycle(isBugActive: false);
+        stationHigh.StartNewCycle(isBugActive: false);
+
+        const int n = 20;
+        var subLow = stationLow.Subsystems[0];
+        var subHigh = stationHigh.Subsystems[0];
+        var beforeLow = subLow.Health;
+        var beforeHigh = subHigh.Health;
+
+        for (int i = 0; i < n; i++)
+        {
+            stationLow.DegradeSubsystem(subLow);
+            stationHigh.DegradeSubsystem(subHigh);
+        }
+
+        var dropLow = beforeLow - subLow.Health;
+        var dropHigh = beforeHigh - subHigh.Health;
+        Assert.True(dropLow > 0, $"low-mult drop should be positive, got {dropLow}");
+        var ratio = dropHigh / dropLow;
+        Assert.InRange(ratio, 2.5, 5.0);
+    }
+
+    [Fact]
+    public void Station_DefaultDegradationMultiplier_PreservesNoArgBehavior()
+    {
+        var stationNoArg = new Station();
+        var stationExplicit = new Station(repairsPerCycle: 3, degradationMultiplier: 1.0);
+
+        Assert.Equal(stationExplicit.RepairsRemainingThisCycle, stationNoArg.RepairsRemainingThisCycle);
+        Assert.Equal(stationExplicit.EmergencyPowerRemaining, stationNoArg.EmergencyPowerRemaining);
+        Assert.Equal(stationExplicit.HullIntegrity, stationNoArg.HullIntegrity);
+        Assert.Equal(stationExplicit.Subsystems.Length, stationNoArg.Subsystems.Length);
+
+        stationNoArg.StartNewCycle(isBugActive: false);
+        stationExplicit.StartNewCycle(isBugActive: false);
+
+        const int n = 20;
+        var subNoArg = stationNoArg.Subsystems[0];
+        var subExplicit = stationExplicit.Subsystems[0];
+
+        for (int i = 0; i < n; i++)
+        {
+            stationNoArg.DegradeSubsystem(subNoArg);
+            stationExplicit.DegradeSubsystem(subExplicit);
+        }
+
+        var dropNoArg = 100 - subNoArg.Health;
+        var dropExplicit = 100 - subExplicit.Health;
+        Assert.True(dropNoArg > 0);
+        Assert.True(dropExplicit > 0);
+        Assert.True(Math.Abs(dropNoArg - dropExplicit) <= 20,
+            $"no-arg ctor and explicit (3, 1.0) ctor should produce comparable degradation modulo variance; got noarg={dropNoArg}, explicit={dropExplicit}");
+    }
 }
