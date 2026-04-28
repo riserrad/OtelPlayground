@@ -81,7 +81,11 @@ string bugTarget;
 IBugStrategy strategy;
 try
 {
-    (bugTarget, strategy) = BugSelector.Select(Environment.GetEnvironmentVariable, subsystemNames, bugActivationDelay);
+    (bugTarget, strategy) = BugSelector.Select(
+        Environment.GetEnvironmentVariable,
+        subsystemNames,
+        bugActivationDelay,
+        cycleProvider: () => station.CycleCount + 1);
 }
 catch (InvalidOperationException ex)
 {
@@ -189,6 +193,10 @@ Console.WriteLine($"  Cycles survived: {station.CycleCount}");
 Console.WriteLine($"  Final hull integrity: {station.HullIntegrity:F1}%");
 Console.WriteLine($"  Cascade failures: {station.CascadeCount,-3}  |   Traces captured: {station.CascadesTracedCount,-3}");
 Console.WriteLine($"  Achievements: {achievementSystem.UnlockedNames.Count} — {string.Join(", ", achievementSystem.UnlockedNames)}");
+if (repairSystem.Strategy is OrphanSpanStrategy orphan && orphan.InjectedCount > 0)
+{
+    Console.WriteLine($"  Telemetry root-detection: {orphan.InjectedCount} synthetic remote-parented cycles");
+}
 Console.ResetColor();
 
 logger.LogInformation("Game over — Cycles: {Cycles}, Hull: {Hull:F1}%",

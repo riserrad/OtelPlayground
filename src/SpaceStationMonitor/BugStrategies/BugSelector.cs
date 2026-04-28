@@ -13,13 +13,14 @@ public static class BugSelector
     public static (string target, IBugStrategy strategy) Select(
         Func<string, string?> env,
         string[] subsystemNames,
-        TimeSpan? activationDelay = null)
+        TimeSpan? activationDelay = null,
+        Func<int>? cycleProvider = null)
     {
         var seedEnv = env("BUG_STRATEGY_SEED");
         var rng = int.TryParse(seedEnv, out var seed) ? new Random(seed) : new Random();
 
         var target = subsystemNames[rng.Next(subsystemNames.Length)];
-        var strategies = BugStrategyCatalog.All(target, activationDelay);
+        var strategies = BugStrategyCatalog.All(target, activationDelay, cycleProvider);
 
         var forcedName = env("BUG_STRATEGY");
         if (!string.IsNullOrWhiteSpace(forcedName))

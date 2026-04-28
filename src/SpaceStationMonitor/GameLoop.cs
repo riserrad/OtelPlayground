@@ -106,10 +106,11 @@ public sealed class GameLoop
                             : null;
                 }
 
+                var parentOverride = _strategy.OverrideStationCycleParent() ?? default;
                 using var cycleActivity = Telemetry.ActivitySource.StartActivity(
                     "StationCycle",
                     ActivityKind.Internal,
-                    parentContext: default,
+                    parentContext: parentOverride,
                     tags: new KeyValuePair<string, object?>[]
                     {
                         new("bug.strategy", _strategy.Name),
