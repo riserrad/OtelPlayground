@@ -16,23 +16,57 @@ public class GameDisplay
     public void SetRepairMessage(string? message) => _lastRepairMessage = message;
     public void SetAchievement(string? message) => _currentAchievement = message;
 
-    public static void RenderStartScreen()
+    public static void RenderModeScreen()
     {
         ClearIfInteractive();
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔══════════════════════════════════════════════════╗");
-        Console.WriteLine("║          SPACE STATION MONITOR v1.0              ║");
+        WritePaddedLine("          SPACE STATION MONITOR v1.0              ");
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
-        Console.WriteLine("║                                                  ║");
-        Console.WriteLine("║             Press any key to start               ║");
-        Console.WriteLine("║                                                  ║");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("1", "Just Playing", ConsoleColor.Green);
+        RenderExplainerRow("Relax. Manage your station. Survive cascades.");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("2", "Playing + Learning Observability", ConsoleColor.Cyan);
+        RenderExplainerRow("A hidden bug is sabotaging your telemetry.");
+        RenderExplainerRow("Find it via the Aspire dashboard.");
+        WritePaddedLine("                                                  ");
+        Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
-        Console.WriteLine("║                    Q to quit                     ║");
+        WritePaddedLine("                    Q to quit                     ");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
     }
 
-    public void Render(Station station, int selectedSubsystem, HullThresholdSampler? sampler = null)
+    public static void RenderDifficultyScreen(GameMode mode)
+    {
+        _ = mode;
+        ClearIfInteractive();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("╔══════════════════════════════════════════════════╗");
+        WritePaddedLine("              SELECT DIFFICULTY                   ");
+        Console.WriteLine("╠══════════════════════════════════════════════════╣");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("1", "Tutorial", ConsoleColor.Green);
+        RenderExplainerRow("Generous repairs and slow degradation.");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("2", "Normal", ConsoleColor.Cyan);
+        RenderExplainerRow("Standard pace.");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("3", "Hard", ConsoleColor.Yellow);
+        RenderExplainerRow("Tight repair budget; events bite.");
+        WritePaddedLine("                                                  ");
+        RenderPickerRow("4", "Expert", ConsoleColor.Red);
+        RenderExplainerRow("One repair per cycle. Nothing is forgiving.");
+        WritePaddedLine("                                                  ");
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("╠══════════════════════════════════════════════════╣");
+        WritePaddedLine("                    Q to quit                     ");
+        Console.WriteLine("╚══════════════════════════════════════════════════╝");
+        Console.ResetColor();
+    }
+
+    public void Render(Station station, int selectedSubsystem, SampleRegimeIndicator? indicator = null)
     {
         ClearIfInteractive();
         var hullStr = $"{station.HullIntegrity:F0}%";
@@ -123,11 +157,41 @@ public class GameDisplay
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
         WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
-        WritePaddedLine($"  [Q] Quit   Emerg Pwr: {station.EmergencyPowerRemaining,-2} |  Repairs: {station.RepairsRemainingThisCycle,-2} left");
+        RenderFooterCounters(station, indicator);
         var selectedName = station.Subsystems[selectedSubsystem].Name;
         WritePaddedLine($"  Cycle: {station.CycleCount,-4}|  Score: {station.Score,-7}|  Sel: {selectedName,-10}");
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
+    }
+
+    // Footer column budget: 19 + 2 + 11 + 2 + 7 + 8 = 49 (+1 trailing pad) = 50.
+    // Badge color is regime-dependent; everything else is frame Cyan.
+    private static void RenderFooterCounters(Station station, SampleRegimeIndicator? indicator)
+    {
+        var (badgeText, badgeColor) = indicator?.CurrentBadge ?? ("        ", ConsoleColor.DarkGray);
+        WritePaddedSegments(
+            ("  [Q] Quit  Emerg: ", ConsoleColor.Cyan),
+            ($"{station.EmergencyPowerRemaining,-2}", ConsoleColor.Cyan),
+            ("  Repairs: ", ConsoleColor.Cyan),
+            ($"{station.RepairsRemainingThisCycle,-2}", ConsoleColor.Cyan),
+            ("  Smp: ", ConsoleColor.Cyan),
+            ($"{badgeText,-8}", badgeColor));
+    }
+
+    // Splash picker row: "  [N] {modeName}" with mode label colored, padded to 50 cols.
+    private static void RenderPickerRow(string number, string modeName, ConsoleColor labelColor)
+    {
+        WritePaddedSegments(
+            ($"  [{number}] ", ConsoleColor.Cyan),
+            (modeName, labelColor));
+    }
+
+    // Splash explainer row sits under the picker row and renders dim grey for visual hierarchy.
+    private static void RenderExplainerRow(string text)
+    {
+        WritePaddedSegments(
+            ("      ", ConsoleColor.Cyan),
+            (text, ConsoleColor.DarkGray));
     }
 
     private static void WritePaddedLine(string content)
