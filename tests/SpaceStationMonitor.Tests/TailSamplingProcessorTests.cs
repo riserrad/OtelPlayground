@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using OpenTelemetry;
 using SpaceStationMonitor.Sampling;
 using Xunit;
 
@@ -124,6 +125,87 @@ public class TailSamplingProcessorTests : IDisposable
     }
 
     [Fact]
+    public void OnShutdown_FlushesBufferedTraces()
+    {
+        var clock = new TestClock();
+        var processor = new TailSamplingProcessor(graceWindow: TimeSpan.FromMilliseconds(200), nowProvider: () => clock.Now);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error);
+        root.Stop();
+        processor.OnEnd(root);
+
+        // Without flushing, the trace is still Pending because the test clock has not
+        // advanced past the grace window.
+        Assert.Equal(TailSamplingDecision.Pending, processor.GetDecision(root.TraceId));
+        Assert.Equal(1, processor.BufferedTraceCount);
+
+        // Shutdown forces a decision on every still-buffered trace.
+        Assert.True(processor.Shutdown());
+
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+    }
+
+    [Fact]
+    public void OnEnd_AfterDecision_DoesNotRebuffer()
+    {
+        var clock = new TestClock();
+        var processor = new TailSamplingProcessor(graceWindow: TimeSpan.FromMilliseconds(200), nowProvider: () => clock.Now);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error);
+        root.Stop();
+        processor.OnEnd(root);
+
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        processor.FlushExpired();
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+
+        // A child span on the same TraceId arrives after the keep/drop decision lands.
+        using var lateChild = Source.StartActivity(
+            "LateChild", ActivityKind.Internal,
+            parentContext: new ActivityContext(root.TraceId, ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded));
+        Assert.NotNull(lateChild);
+        lateChild!.Stop();
+        processor.OnEnd(lateChild);
+
+        // The processor must not seed a fresh buffer entry for this TraceId, otherwise
+        // a long-lived process would leak memory and a Kept trace would ship twice.
+        Assert.Equal(0, processor.BufferedTraceCount);
+        Assert.Equal(TailSamplingDecision.Kept, processor.GetDecision(root.TraceId));
+    }
+
+    [Fact]
+    public void DeterministicKeepRule_GoldenTraceIds()
+    {
+        // Hard-coded TraceIds with hand-computed expected outcomes. A test built from
+        // CreateRandom() trace ids would also pass under traceId.GetHashCode() (stable
+        // within a single process), so it would not catch a regression that swapped the
+        // hash source for one not stable across processes or framework versions. These
+        // four ids exercise both keep and drop branches of the 25%-by-low-uint16 rule
+        // and pin the exact inputs/outputs as a regression contract.
+        var goldenCases = new (ActivityTraceId TraceId, bool Expected)[]
+        {
+            (ActivityTraceId.CreateFromString("00000000000000000000000000000001".AsSpan()), true),
+            (ActivityTraceId.CreateFromString("11111111111111111111111111111111".AsSpan()), true),
+            (ActivityTraceId.CreateFromString("89abcdef0123456789abcdef01234567".AsSpan()), false),
+            (ActivityTraceId.CreateFromString("fedcba9876543210fedcba9876543210".AsSpan()), false),
+        };
+
+        foreach (var (traceId, expected) in goldenCases)
+        {
+            bool actual = TailSamplingProcessor.ShouldKeep(Array.Empty<Activity>(), traceId);
+            Assert.Equal(expected, actual);
+        }
+
+        // Guard against a degenerate implementation that always returns the same result.
+        Assert.Contains(goldenCases, c => c.Expected);
+        Assert.Contains(goldenCases, c => !c.Expected);
+    }
+
+    [Fact]
     public void RootSpanEndPlusGrace_TriggersFlush()
     {
         var clock = new TestClock();
@@ -144,6 +226,30 @@ public class TailSamplingProcessorTests : IDisposable
         Assert.NotEqual(TailSamplingDecision.Pending, processor.GetDecision(root.TraceId));
     }
 
+    [Fact]
+    public void GraceFlush_ForwardsKeptTracesOutsideLock()
+    {
+        var clock = new TestClock();
+        var observer = new LockObserverProcessor();
+        var processor = new TailSamplingProcessor(
+            next: observer,
+            graceWindow: TimeSpan.FromMilliseconds(200),
+            nowProvider: () => clock.Now);
+        observer.Bind(processor);
+
+        using var root = StartRoot();
+        root.SetStatus(ActivityStatusCode.Error); // forces Kept
+        root.Stop();
+        processor.OnEnd(root);
+
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        processor.FlushExpired();
+
+        Assert.True(observer.OnEndCallCount > 0, "downstream OnEnd was never invoked");
+        Assert.True(observer.AllForwardsSawLockReleased,
+            "downstream OnEnd was invoked while the processor still held _lock");
+    }
+
     private static Activity StartRoot()
     {
         var a = Source.StartActivity("Root", ActivityKind.Internal, parentContext: default);
@@ -155,5 +261,27 @@ public class TailSamplingProcessorTests : IDisposable
     {
         public DateTime Now { get; private set; } = new DateTime(2026, 4, 26, 0, 0, 0, DateTimeKind.Utc);
         public void Advance(TimeSpan delta) => Now = Now.Add(delta);
+    }
+
+    // Downstream double that probes whether _lock is still held when OnEnd runs.
+    // Reading BufferedTraceCount from a thread-pool thread acquires _lock; if the
+    // calling thread still holds it, the probe blocks until timeout. Same-thread
+    // re-entry can't be used here because Monitor is recursive on the owning
+    // thread and would succeed even with the lock held.
+    private sealed class LockObserverProcessor : BaseProcessor<Activity>
+    {
+        private TailSamplingProcessor? _processor;
+        public int OnEndCallCount { get; private set; }
+        public bool AllForwardsSawLockReleased { get; private set; } = true;
+
+        public void Bind(TailSamplingProcessor processor) => _processor = processor;
+
+        public override void OnEnd(Activity data)
+        {
+            OnEndCallCount++;
+            var probe = Task.Run(() => _processor!.BufferedTraceCount);
+            if (!probe.Wait(TimeSpan.FromSeconds(2)))
+                AllForwardsSawLockReleased = false;
+        }
     }
 }

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using OpenTelemetry;
 
@@ -59,40 +60,149 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 
     public override void OnEnd(Activity data)
     {
+        // Forwarding to the downstream processor must happen outside _lock: _next is
+        // external code and may be slow or re-entrant, so holding the lock across the
+        // call increases contention and risks deadlock. Every forwarding site in this
+        // class follows the same shape: accumulate the decision under the lock, exit,
+        // then forward.
+        bool forwardLateSpan = false;
+        List<Activity>? toForward = null;
+
         lock (_lock)
         {
-            FlushExpiredLocked();
+            FlushExpiredLocked(ref toForward);
 
             var traceId = data.TraceId;
-            if (!_buffers.TryGetValue(traceId, out var buffer))
-            {
-                if (_buffers.Count >= _bufferCap)
-                {
-                    var oldestNode = _insertionOrder.First;
-                    if (oldestNode is not null)
-                    {
-                        _insertionOrder.RemoveFirst();
-                        DecideAndForwardLocked(oldestNode.Value);
-                    }
-                }
-                buffer = new TraceBuffer();
-                _buffers[traceId] = buffer;
-                _insertionOrder.AddLast(traceId);
-            }
 
-            buffer.Activities.Add(data);
-            buffer.LastActivityTime = _now();
-            // True local root: no in-process parent AND no propagated remote parent.
-            // A non-default ParentSpanId (set via W3C traceparent on a cross-process child)
-            // means this Activity has a remote parent, so the trace's true root lives
-            // elsewhere. Treating it as the local root would flush the buffer prematurely
-            // while later in-process children for the same trace are still arriving.
-            if (data.Parent is null && data.ParentSpanId == default)
+            // A late span (one arriving after the trace's keep/drop has been decided)
+            // must not seed a fresh buffer entry under the same TraceId. Doing so
+            // would leak memory and could ship the trace twice if it had been Kept.
+            if (_decisions.TryGetValue(traceId, out var prior))
             {
-                buffer.RootSeen = true;
-                buffer.RootEndTime = _now();
+                forwardLateSpan = prior == TailSamplingDecision.Kept && _next is not null;
+            }
+            else
+            {
+                if (!_buffers.TryGetValue(traceId, out var buffer))
+                {
+                    if (_buffers.Count >= _bufferCap)
+                    {
+                        var oldestNode = _insertionOrder.First;
+                        if (oldestNode is not null)
+                        {
+                            _insertionOrder.RemoveFirst();
+                            DecideLocked(oldestNode.Value, ref toForward);
+                        }
+                    }
+                    buffer = new TraceBuffer();
+                    _buffers[traceId] = buffer;
+                    _insertionOrder.AddLast(traceId);
+                }
+
+                buffer.Activities.Add(data);
+                buffer.LastActivityTime = _now();
+                // True local root: no in-process parent AND no propagated remote parent.
+                // A non-default ParentSpanId (set via W3C traceparent on a cross-process child)
+                // means this Activity has a remote parent, so the trace's true root lives
+                // elsewhere. Treating it as the local root would flush the buffer prematurely
+                // while later in-process children for the same trace are still arriving.
+                if (data.Parent is null && data.ParentSpanId == default)
+                {
+                    buffer.RootSeen = true;
+                    buffer.RootEndTime = _now();
+                }
             }
         }
+
+        ForwardOutsideLock(toForward);
+
+        if (forwardLateSpan)
+        {
+            _next!.OnEnd(data);
+        }
+    }
+
+    /// <summary>
+    /// Number of traces currently buffered awaiting a decision. Useful for tests and
+    /// for confirming buffer drain on shutdown / force-flush.
+    /// </summary>
+    public int BufferedTraceCount
+    {
+        get { lock (_lock) return _buffers.Count; }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Decides every still-buffered trace by applying the standard keep/drop rules,
+    /// then asks the downstream processor (if any) to flush. Without this override,
+    /// buffered traces would be dropped silently when the SDK tears down.
+    /// </remarks>
+    protected override bool OnForceFlush(int timeoutMilliseconds)
+        => FlushAllBuffered(timeoutMilliseconds, isShutdown: false);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Same drain gesture as <see cref="OnForceFlush"/>, but propagates a true
+    /// shutdown to the downstream processor so its own teardown logic (releasing
+    /// network handles, finalizing background workers) runs. Calling
+    /// <see cref="BaseProcessor{T}.ForceFlush(int)"/> here would leave that cleanup
+    /// undone. The base class only invokes this once, so per-trace decisions are
+    /// recorded normally in the decision cache.
+    /// </remarks>
+    protected override bool OnShutdown(int timeoutMilliseconds)
+        => FlushAllBuffered(timeoutMilliseconds, isShutdown: true);
+
+    private bool FlushAllBuffered(int timeoutMilliseconds, bool isShutdown)
+    {
+        DateTime? deadline = timeoutMilliseconds == Timeout.Infinite
+            ? null
+            : _now().AddMilliseconds(timeoutMilliseconds);
+
+        List<Activity>? toForward = null;
+
+        lock (_lock)
+        {
+            // Snapshot keys first so we can mutate _buffers inside the loop.
+            var traceIds = new ActivityTraceId[_buffers.Count];
+            int idx = 0;
+            foreach (var key in _buffers.Keys) traceIds[idx++] = key;
+
+            foreach (var traceId in traceIds)
+            {
+                if (deadline.HasValue && _now() >= deadline.Value)
+                    return false;
+
+                if (!_buffers.Remove(traceId, out var buffer)) continue;
+                _insertionOrder.Remove(traceId);
+
+                bool keep = ShouldKeep(buffer.Activities, traceId);
+                _decisions[traceId] = keep ? TailSamplingDecision.Kept : TailSamplingDecision.Dropped;
+
+                if (keep)
+                {
+                    (toForward ??= new()).AddRange(buffer.Activities);
+                }
+            }
+        }
+
+        if (toForward is not null && _next is not null)
+        {
+            foreach (var act in toForward)
+            {
+                if (deadline.HasValue && _now() >= deadline.Value) return false;
+                _next.OnEnd(act);
+            }
+        }
+
+        if (_next is null) return true;
+
+        if (deadline.HasValue)
+        {
+            int remaining = (int)Math.Max(0, (deadline.Value - _now()).TotalMilliseconds);
+            return isShutdown ? _next.Shutdown(remaining) : _next.ForceFlush(remaining);
+        }
+
+        return isShutdown ? _next.Shutdown() : _next.ForceFlush();
     }
 
     /// <summary>
@@ -101,11 +211,15 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     /// </summary>
     public TailSamplingDecision GetDecision(ActivityTraceId traceId)
     {
+        List<Activity>? toForward = null;
+        TailSamplingDecision result;
         lock (_lock)
         {
-            FlushExpiredLocked();
-            return _decisions.TryGetValue(traceId, out var d) ? d : TailSamplingDecision.Pending;
+            FlushExpiredLocked(ref toForward);
+            result = _decisions.TryGetValue(traceId, out var d) ? d : TailSamplingDecision.Pending;
         }
+        ForwardOutsideLock(toForward);
+        return result;
     }
 
     /// <summary>
@@ -115,10 +229,12 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
     /// </summary>
     public void FlushExpired()
     {
-        lock (_lock) FlushExpiredLocked();
+        List<Activity>? toForward = null;
+        lock (_lock) FlushExpiredLocked(ref toForward);
+        ForwardOutsideLock(toForward);
     }
 
-    private void FlushExpiredLocked()
+    private void FlushExpiredLocked(ref List<Activity>? toForward)
     {
         var now = _now();
         List<ActivityTraceId>? toDecide = null;
@@ -142,22 +258,28 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
         foreach (var id in toDecide)
         {
             _insertionOrder.Remove(id);
-            DecideAndForwardLocked(id);
+            DecideLocked(id, ref toForward);
         }
     }
 
-    private void DecideAndForwardLocked(ActivityTraceId traceId)
+    private void DecideLocked(ActivityTraceId traceId, ref List<Activity>? toForward)
     {
         if (!_buffers.Remove(traceId, out var buffer)) return;
 
         bool keep = ShouldKeep(buffer.Activities, traceId);
         _decisions[traceId] = keep ? TailSamplingDecision.Kept : TailSamplingDecision.Dropped;
 
-        if (keep && _next is not null)
+        if (keep)
         {
-            foreach (var act in buffer.Activities)
-                _next.OnEnd(act);
+            (toForward ??= new()).AddRange(buffer.Activities);
         }
+    }
+
+    private void ForwardOutsideLock(List<Activity>? toForward)
+    {
+        if (toForward is null || _next is null) return;
+        foreach (var act in toForward)
+            _next.OnEnd(act);
     }
 
     internal static bool ShouldKeep(IEnumerable<Activity> activities, ActivityTraceId traceId)
@@ -176,8 +298,14 @@ public sealed class TailSamplingProcessor : BaseProcessor<Activity>
 
         if (sawError || sawCascade || sawFailedRepair) return true;
 
-        // Default fallback: deterministic 25% by TraceId hash.
-        return (traceId.GetHashCode() & 0xFFFF) < 0xFFFF * SampleRatio;
+        // Default fallback: deterministic 25% sample using the raw TraceId bytes.
+        // .NET's Object.GetHashCode is not guaranteed stable across processes or
+        // framework versions, so a hash-based sample built on it would land
+        // differently for the same TraceId in a multi-process pipeline.
+        Span<byte> bytes = stackalloc byte[16];
+        traceId.CopyTo(bytes);
+        uint stable = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        return (stable & 0xFFFF) < 0xFFFF * SampleRatio;
     }
 
     private sealed class TraceBuffer
