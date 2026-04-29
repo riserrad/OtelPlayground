@@ -26,6 +26,17 @@ public interface IBugStrategy
     /// untouched (default behavior).
     /// </summary>
     ActivityContext? OverrideStationCycleParent();
+
+    /// <summary>
+    /// Optional hook letting a strategy mutate the tag set emitted at a high-frequency
+    /// instrument site. The default returns <paramref name="tags"/> unchanged. Strategies
+    /// that simulate semantic-convention drift (renaming, dropping, or adding keys) override
+    /// this; <paramref name="instrumentName"/> lets the strategy scope its mutation to
+    /// specific targets.
+    /// </summary>
+    IEnumerable<KeyValuePair<string, object?>> MutateTags(
+        string instrumentName,
+        IEnumerable<KeyValuePair<string, object?>> tags);
 }
 
 public abstract class BugStrategyBase : IBugStrategy
@@ -50,4 +61,8 @@ public abstract class BugStrategyBase : IBugStrategy
     public virtual Subsystem RedirectDegradationTarget(Subsystem requested, IReadOnlyList<Subsystem> all) => requested;
     public virtual TimeSpan? RepairDelay(Subsystem sub) => null;
     public virtual ActivityContext? OverrideStationCycleParent() => null;
+
+    public virtual IEnumerable<KeyValuePair<string, object?>> MutateTags(
+        string instrumentName,
+        IEnumerable<KeyValuePair<string, object?>> tags) => tags;
 }

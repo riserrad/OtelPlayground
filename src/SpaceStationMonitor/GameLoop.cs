@@ -132,11 +132,16 @@ public sealed class GameLoop
 
                     _station.DegradeSubsystem(actualTarget);
 
-                    tickActivity?.SetTag("subsystem.name", actualTarget.Name);
-                    tickActivity?.SetTag("health.before", Math.Round(healthBefore, 1));
-                    tickActivity?.SetTag("health.after", Math.Round(actualTarget.Health, 1));
-                    tickActivity?.SetTag("degradation.rate",
-                        Math.Round(actualTarget.BaseDegradationRate * actualTarget.CascadeMultiplier, 2));
+                    var tickTags = new KeyValuePair<string, object?>[]
+                    {
+                        new("subsystem.name", actualTarget.Name),
+                        new("health.before", Math.Round(healthBefore, 1)),
+                        new("health.after", Math.Round(actualTarget.Health, 1)),
+                        new("degradation.rate",
+                            Math.Round(actualTarget.BaseDegradationRate * actualTarget.CascadeMultiplier, 2)),
+                    };
+                    foreach (var tag in _strategy.MutateTags("SubsystemTick", tickTags))
+                        tickActivity?.SetTag(tag.Key, tag.Value);
 
                     _logger.LogInformation("Subsystem {Name}: {Before:F1}% → {After:F1}%",
                         actualTarget.Name, healthBefore, actualTarget.Health);

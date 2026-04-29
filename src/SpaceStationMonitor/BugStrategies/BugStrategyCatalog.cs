@@ -19,6 +19,7 @@ public static class BugStrategyCatalog
         new RetryStormStrategy(bugTarget, activationDelay),
         new SamplingBlindSpotStrategy(bugTarget, activationDelay),
         new OrphanSpanStrategy(bugTarget, activationDelay, cycleProvider),
+        new AttributeKeyDriftStrategy(bugTarget, activationDelay, cycleProvider),
     ];
 
     public static IBugStrategy? FindByName(IEnumerable<IBugStrategy> strategies, string name)

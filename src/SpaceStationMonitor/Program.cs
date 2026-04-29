@@ -222,8 +222,11 @@ if (samplerProfileEnvIgnored)
 // ── Register gauge metrics (need Station reference) ─────────────────────────
 Telemetry.Meter.CreateObservableGauge("station.subsystem.health",
     () => station.Subsystems.Select(s =>
-        new Measurement<double>(s.Health,
-            new KeyValuePair<string, object?>("subsystem.name", s.Name))),
+    {
+        var rawTags = new[] { new KeyValuePair<string, object?>("subsystem.name", s.Name) };
+        var mutated = strategy.MutateTags("station.subsystem.health", rawTags).ToArray();
+        return new Measurement<double>(s.Health, mutated);
+    }),
     "percent", "Current health of each subsystem");
 
 Telemetry.Meter.CreateObservableGauge<double>("station.hull.integrity",
@@ -275,6 +278,10 @@ if (gameMode == GameMode.Learning)
     if (repairSystem.Strategy is OrphanSpanStrategy orphan && orphan.InjectedCount > 0)
     {
         Console.WriteLine($"  Telemetry root-detection: {orphan.InjectedCount} synthetic remote-parented cycles");
+    }
+    if (repairSystem.Strategy is AttributeKeyDriftStrategy drift && drift.ObservedKeys.Count > 1)
+    {
+        Console.WriteLine($"  Telemetry attribute keys observed: {drift.ObservedKeys.Count} variants on 'subsystem'");
     }
 }
 Console.ResetColor();
