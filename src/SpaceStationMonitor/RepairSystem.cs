@@ -20,17 +20,28 @@ public class RepairSystem
 
     // BeginRepair starts a RepairAction Activity at slot-claim time and returns the
     // in-flight entry. The Activity stays open across cycle boundaries; CompleteRepair
-    // (or the cancellation path) is responsible for stopping it.
+    // (or the cancellation / shutdown path) is responsible for stopping it. RepairAction
+    // is a ROOT span (parentContext: default) and Activity.Current is restored after the
+    // Start so the in-flight Activity does not pollute the ambient context — otherwise
+    // the next StationCycle would inherit RepairAction as its parent, inverting the
+    // researcher AC-16 invariant that StationCycle is the cycle root and RepairAction
+    // is linked-from-StationCycle, never parented-to-StationCycle.
     public InFlightRepair BeginRepair(Subsystem subsystem, int requested)
     {
         int cyclesRequired = Math.Clamp((int)Math.Ceiling((100 - subsystem.Health) / 33.0), 1, 3);
 
+        // StartActivity inherits Activity.Current as parent even when an explicit
+        // parentContext: default is supplied; null'ing Current first is the only
+        // reliable way to force the new Activity to be a true root span.
+        var previousCurrent = Activity.Current;
+        Activity.Current = null;
         var activity = Telemetry.ActivitySource.StartActivity(
             "RepairAction",
             ActivityKind.Internal);
         activity?.SetTag("subsystem.name", subsystem.Name);
         activity?.SetTag("repair.requested", requested);
         activity?.SetTag("repair.cycles_required", cyclesRequired);
+        Activity.Current = previousCurrent;
 
         return new InFlightRepair(subsystem, requested, cyclesRequired, activity);
     }
@@ -58,6 +69,13 @@ public class RepairSystem
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             activity?.AddEvent(new ActivityEvent("RepairFailed"));
+            // Counter rides with the RepairFailed event so unexpected exceptions
+            // (NRE, OOM, lifecycle) don't drop silently. Repair's inner catch already
+            // increments on its own !ShouldRetryAfterFailure / quota-denied paths;
+            // re-throws from there land here too, which is acceptable counter
+            // duplication for the symmetric event-and-counter shape.
+            Telemetry.RepairsFailed.Add(1,
+                new KeyValuePair<string, object?>("subsystem.name", entry.Subsystem.Name));
             return new RepairResult(
                 SubsystemName: entry.Subsystem.Name,
                 Requested: entry.Requested,

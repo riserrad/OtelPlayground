@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging.Abstractions;
 using SpaceStationMonitor;
 using SpaceStationMonitor.BugStrategies;
@@ -90,7 +91,7 @@ public class GameLoopAsyncRepairTests
     }
 
     [Fact]
-    public void CancelledRepair_SetsErrorStatus_AndEmitsRepairCancelledEvent()
+    public void HandleCancelRepair_DrivesProductionPath_EmitsExpectedTelemetry()
     {
         using var listener = new ActivityListener
         {
@@ -99,33 +100,93 @@ public class GameLoopAsyncRepairTests
         };
         ActivitySource.AddActivityListener(listener);
 
-        var strategy = new NoOpBugStrategy("Oxygen");
-        var repair = new RepairSystem(strategy);
-        var ar = new ActiveRepairs(concurrentRepairs: 4);
-        var sub = new Subsystem("Oxygen", 1.0) { Health = 50 };
-        var entry = repair.BeginRepair(sub, requested: 20);
-        ar.TryStart(entry);
-
-        var ok = ar.TryCancelOldestOn(sub, out var cancelled);
-        Assert.True(ok);
-        Assert.NotNull(cancelled);
-
-        cancelled!.RepairAction?.AddEvent(new ActivityEvent("RepairCancelled",
-            tags: new ActivityTagsCollection
+        long repairsFailedCount = 0;
+        string? capturedSubsystem = null;
+        string? capturedReason = null;
+        using var meterListener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
             {
-                { "cancellation.reason", "player_cancel" }
-            }));
-        cancelled.RepairAction?.SetStatus(ActivityStatusCode.Error, "cancelled");
-        cancelled.RepairAction?.Stop();
+                if (instrument.Meter.Name == Telemetry.MeterName
+                    && instrument.Name == "station.repairs.failed")
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((inst, measurement, tags, state) =>
+        {
+            Interlocked.Add(ref repairsFailedCount, measurement);
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "subsystem.name") capturedSubsystem = tag.Value as string;
+                else if (tag.Key == "cancellation.reason") capturedReason = tag.Value as string;
+            }
+        });
+        meterListener.Start();
 
-        Assert.Equal(ActivityStatusCode.Error, cancelled.RepairAction!.Status);
-        Assert.Equal("cancelled", cancelled.RepairAction.StatusDescription);
-        Assert.True(cancelled.RepairAction.Duration > TimeSpan.Zero);
+        var (loop, station, _) = BuildLoop(maxCycles: 1);
+        var sub = station.Subsystems[0];
+        sub.Health = 50;
+        var entry = new RepairSystem(new NoOpBugStrategy("Oxygen")).BeginRepair(sub, requested: 20);
+        Assert.True(station.ActiveRepairs.TryStart(entry));
 
-        var cancelEvent = cancelled.RepairAction.Events.FirstOrDefault(e => e.Name == "RepairCancelled");
+        // Drive the production HandleCancelRepair path so any regression in the
+        // AddEvent / SetStatus / Stop / Telemetry.RepairsFailed.Add chain surfaces
+        // through this test. Replaying those calls inline (the prior test shape)
+        // verified the assertion targets but not the production code path.
+        loop.HandleCancelRepair();
+
+        Assert.NotNull(entry.RepairAction);
+        Assert.Equal(ActivityStatusCode.Error, entry.RepairAction!.Status);
+        Assert.Equal("cancelled", entry.RepairAction.StatusDescription);
+        Assert.True(entry.RepairAction.Duration > TimeSpan.Zero);
+
+        var cancelEvent = entry.RepairAction.Events.FirstOrDefault(e => e.Name == "RepairCancelled");
         Assert.NotEqual(default, cancelEvent);
         var reason = cancelEvent.Tags.FirstOrDefault(t => t.Key == "cancellation.reason").Value;
         Assert.Equal("player_cancel", reason);
+
+        Assert.Equal(0, station.ActiveRepairs.InFlightCount);
+
+        meterListener.RecordObservableInstruments();
+        Assert.Equal(1, repairsFailedCount);
+        Assert.Equal("Oxygen", capturedSubsystem);
+        Assert.Equal("player_cancel", capturedReason);
+    }
+
+    [Fact]
+    public void HandleCancelRepair_NoInFlightOnSelected_NoTelemetryEmitted()
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == Telemetry.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        long repairsFailedCount = 0;
+        using var meterListener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Meter.Name == Telemetry.MeterName
+                    && instrument.Name == "station.repairs.failed")
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            }
+        };
+        meterListener.SetMeasurementEventCallback<long>((inst, measurement, tags, state) =>
+            Interlocked.Add(ref repairsFailedCount, measurement));
+        meterListener.Start();
+
+        var (loop, station, _) = BuildLoop(maxCycles: 1);
+        Assert.Equal(0, station.ActiveRepairs.InFlightCount);
+
+        loop.HandleCancelRepair();
+
+        Assert.Equal(0, repairsFailedCount);
     }
 
     private static (GameLoop loop, Station station, IBugStrategy strategy) BuildLoop(int maxCycles = 3)

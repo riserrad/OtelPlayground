@@ -21,6 +21,51 @@ public class RepairSystemAsyncTests
     }
 
     [Fact]
+    public void BeginRepair_DoesNotPolluteActivityCurrent()
+    {
+        using var listener = StartListener();
+        var strategy = new NoOpBugStrategy("Oxygen");
+        var repair = new RepairSystem(strategy);
+        var sub = new Subsystem("Oxygen", 1.0) { Health = 50 };
+
+        using var outerActivity = Telemetry.ActivitySource.StartActivity("OuterScope");
+        var beforeCurrent = Activity.Current;
+        Assert.Same(outerActivity, beforeCurrent);
+
+        var entry = repair.BeginRepair(sub, requested: 20);
+
+        // Activity.Current must be restored after BeginRepair: leaving the in-flight
+        // RepairAction as Current would invert StationCycle's parentage on the next
+        // cycle (researcher AC-16 — RepairAction is linked-from, not parented-to).
+        Assert.Same(beforeCurrent, Activity.Current);
+
+        entry.RepairAction?.Stop();
+    }
+
+    [Fact]
+    public void BeginRepair_StartsAsRoot_NotChildOfAmbientActivity()
+    {
+        using var listener = StartListener();
+        var strategy = new NoOpBugStrategy("Oxygen");
+        var repair = new RepairSystem(strategy);
+        var sub = new Subsystem("Oxygen", 1.0) { Health = 50 };
+
+        using var outerActivity = Telemetry.ActivitySource.StartActivity("OuterScope");
+        Assert.NotNull(outerActivity);
+
+        var entry = repair.BeginRepair(sub, requested: 20);
+
+        Assert.NotNull(entry.RepairAction);
+        // RepairAction starts as a root span: distinct TraceId from the ambient outer
+        // activity. The link from each StationCycle to the in-flight RepairAction
+        // carries the cycle→repair causality without parent-of falsification.
+        Assert.NotEqual(outerActivity!.TraceId, entry.RepairAction!.TraceId);
+        Assert.Null(entry.RepairAction.Parent);
+
+        entry.RepairAction.Stop();
+    }
+
+    [Fact]
     public void BeginRepair_StartsActivity_WithExpectedTags()
     {
         using var listener = StartListener();

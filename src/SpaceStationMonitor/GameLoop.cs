@@ -286,6 +286,22 @@ public sealed class GameLoop
         {
             // Normal shutdown via Ctrl+C
         }
+        finally
+        {
+            // Stop any RepairAction Activities still in flight when the loop exits
+            // (Ctrl+C, hull-zero game-over, max-cycles cap). Without this, those
+            // Activities never get Stop()ed and surface as orphan spans in the trace
+            // export. cancellation.reason="shutdown" keeps the queryable dimension
+            // symmetric with the player-cancel path.
+            foreach (var entry in _station.ActiveRepairs.InFlight)
+            {
+                entry.RepairAction?.SetStatus(ActivityStatusCode.Error, "shutdown");
+                entry.RepairAction?.Stop();
+                Telemetry.RepairsFailed.Add(1,
+                    new KeyValuePair<string, object?>("subsystem.name", entry.Subsystem.Name),
+                    new KeyValuePair<string, object?>("cancellation.reason", "shutdown"));
+            }
+        }
     }
 
     private async Task PollInputAsync(CancellationTokenSource waitCts)
@@ -402,7 +418,7 @@ public sealed class GameLoop
         _display.Render(_station, _selectedSubsystem, _indicator);
     }
 
-    private void HandleCancelRepair()
+    internal void HandleCancelRepair()
     {
         var sub = _station.Subsystems[_selectedSubsystem];
         if (_station.ActiveRepairs.TryCancelOldestOn(sub, out var cancelled) && cancelled is not null)
