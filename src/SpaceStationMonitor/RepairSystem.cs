@@ -72,10 +72,12 @@ public class RepairSystem
             // Counter rides with the RepairFailed event so unexpected exceptions
             // (NRE, OOM, lifecycle) don't drop silently. Repair's inner catch already
             // increments on its own !ShouldRetryAfterFailure / quota-denied paths;
-            // re-throws from there land here too, which is acceptable counter
-            // duplication for the symmetric event-and-counter shape.
+            // re-throws from there land here too, producing 2x on common-bail paths.
+            // failure.layer="outer" tags this site so dashboards can dedupe via
+            // `RepairsFailed{failure.layer != "outer"}` for unique-attempt counts.
             Telemetry.RepairsFailed.Add(1,
-                new KeyValuePair<string, object?>("subsystem.name", entry.Subsystem.Name));
+                new KeyValuePair<string, object?>("subsystem.name", entry.Subsystem.Name),
+                new KeyValuePair<string, object?>("failure.layer", "outer"));
             return new RepairResult(
                 SubsystemName: entry.Subsystem.Name,
                 Requested: entry.Requested,
