@@ -163,7 +163,7 @@ public class GameDisplay
         Console.ResetColor();
     }
 
-    // Footer column budget: 19 + 2 + 8 + 2 + 9 + 8 = 48 (+2 trailing pad) = 50.
+    // Footer column budget: 19 + 2 + 9 + 8 = 38 (+12 trailing pad) = 50.
     // Badge color is regime-dependent; everything else is frame Cyan.
     private static void RenderFooterCounters(Station station, SampleRegimeIndicator? indicator)
     {
@@ -171,8 +171,6 @@ public class GameDisplay
         WritePaddedSegments(
             ("  [Q] Quit  Emerg: ", ConsoleColor.Cyan),
             ($"{station.EmergencyPowerRemaining,-2}", ConsoleColor.Cyan),
-            ("  Free: ", ConsoleColor.Cyan),
-            ($"{station.ActiveRepairs.AvailableSlots,-2}", ConsoleColor.Cyan),
             ("    Smp: ", ConsoleColor.Cyan),
             ($"{badgeText,-8}", badgeColor));
     }
