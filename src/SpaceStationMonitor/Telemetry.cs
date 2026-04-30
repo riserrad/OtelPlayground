@@ -21,7 +21,7 @@ public static class Telemetry
 
     public static readonly Counter<long> RepairsDenied =
         Meter.CreateCounter<long>("station.repairs.denied",
-            description: "Repair attempts blocked by per-cycle quota");
+            description: "Repair attempts blocked by no free repair slot");
 
     public static readonly Counter<long> CascadeFailures =
         Meter.CreateCounter<long>("station.cascade.failures", description: "Cascade failure events");

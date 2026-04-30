@@ -18,9 +18,64 @@ public class RepairSystem
     public bool IsBugActive => _strategy.IsBugActive;
     public string BugStrategyName => _strategy.Name;
 
+    // BeginRepair starts a RepairAction Activity at slot-claim time and returns the
+    // in-flight entry. The Activity stays open across cycle boundaries; CompleteRepair
+    // (or the cancellation path) is responsible for stopping it.
+    public InFlightRepair BeginRepair(Subsystem subsystem, int requested)
+    {
+        int cyclesRequired = Math.Clamp((int)Math.Ceiling((100 - subsystem.Health) / 33.0), 1, 3);
+
+        var activity = Telemetry.ActivitySource.StartActivity(
+            "RepairAction",
+            ActivityKind.Internal);
+        activity?.SetTag("subsystem.name", subsystem.Name);
+        activity?.SetTag("repair.requested", requested);
+        activity?.SetTag("repair.cycles_required", cyclesRequired);
+
+        return new InFlightRepair(subsystem, requested, cyclesRequired, activity);
+    }
+
+    public RepairResult CompleteRepair(InFlightRepair entry)
+    {
+        var activity = entry.RepairAction;
+        try
+        {
+            var result = Repair(entry.Subsystem, entry.Requested, tryConsumeQuota: null);
+            activity?.SetTag("repair.applied", result.Applied);
+            activity?.SetTag("repair.healthy", result.IsHealthy);
+            if (!result.IsHealthy)
+            {
+                activity?.AddEvent(new ActivityEvent("RepairLeak",
+                    tags: new ActivityTagsCollection
+                    {
+                        { "repair.delta", result.Requested - result.Applied }
+                    }));
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            activity?.AddEvent(new ActivityEvent("RepairFailed"));
+            return new RepairResult(
+                SubsystemName: entry.Subsystem.Name,
+                Requested: entry.Requested,
+                Applied: 0,
+                HealthBefore: entry.Subsystem.Health,
+                HealthAfter: entry.Subsystem.Health,
+                DisplayedAfter: entry.Subsystem.Health,
+                IsHealthy: false);
+        }
+        finally
+        {
+            activity?.Stop();
+        }
+    }
+
     // tryConsumeQuota is called before each RETRY (not the original attempt, which
-    // is gated upstream by HandleRepair). When it returns false the retry loop
-    // bails with repairs.denied++ and the caught exception propagates.
+    // is gated upstream). When it returns false the retry loop bails with repairs.denied++
+    // and the caught exception propagates.
     public RepairResult Repair(Subsystem subsystem, int requested, Func<bool>? tryConsumeQuota = null)
     {
         var delay = _strategy.RepairDelay(subsystem);

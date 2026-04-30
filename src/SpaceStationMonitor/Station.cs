@@ -25,17 +25,17 @@ public class Subsystem
 public class Station
 {
     private readonly Random _random = new();
-    private readonly int _repairsPerCycle;
     private readonly double _baseDegradationMultiplier;
     private double _difficultyMultiplier = 1.0;
     private int _postBugCycles;
 
-    public Station(int repairsPerCycle = 3, double degradationMultiplier = 1.0)
+    public Station(int concurrentRepairs = 3, double degradationMultiplier = 1.0)
     {
-        _repairsPerCycle = repairsPerCycle;
         _baseDegradationMultiplier = degradationMultiplier;
-        RepairsRemainingThisCycle = repairsPerCycle;
+        ActiveRepairs = new ActiveRepairs(concurrentRepairs);
     }
+
+    public ActiveRepairs ActiveRepairs { get; }
 
     public Subsystem[] Subsystems { get; } =
     [
@@ -46,7 +46,6 @@ public class Station
     ];
 
     public int EmergencyPowerRemaining { get; private set; } = 3;
-    public int RepairsRemainingThisCycle { get; private set; }
     public int CycleCount { get; private set; }
     public DateTime StartTime { get; } = DateTime.UtcNow;
 
@@ -68,7 +67,6 @@ public class Station
     public void StartNewCycle(bool isBugActive)
     {
         CycleCount++;
-        RepairsRemainingThisCycle = _repairsPerCycle;
         SolarFlareThisCycle = false;
 
         if (EmergencyPowerRemaining == 0)
@@ -108,13 +106,6 @@ public class Station
         else IronHullStreak = 0;
 
         MinSubsystemStayedAbove30 = Subsystems.All(s => s.Health >= 30);
-    }
-
-    public bool TryConsumeRepair()
-    {
-        if (RepairsRemainingThisCycle <= 0) return false;
-        RepairsRemainingThisCycle--;
-        return true;
     }
 
     public void DegradeSubsystem(Subsystem subsystem)

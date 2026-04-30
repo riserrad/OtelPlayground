@@ -57,7 +57,7 @@ else
 
 // ── Per-mode + per-difficulty configuration ─────────────────────────────────
 var tuning = DifficultyTunings.For(difficulty);
-int repairsPerCycle = tuning.RepairsPerCycle;
+int concurrentRepairs = tuning.RepairsPerCycle;
 double degradationMultiplier = tuning.DegradationMultiplier;
 double eventChanceMultiplier = tuning.EventChanceMultiplier;
 
@@ -84,7 +84,7 @@ else
 // ── Game components ─────────────────────────────────────────────────────────
 // Clocks (Station.StartTime, strategy start time) capture DateTime.UtcNow at
 // construction, so these must be built AFTER the splash blocks for input.
-var station = new Station(repairsPerCycle, degradationMultiplier);
+var station = new Station(concurrentRepairs, degradationMultiplier);
 var random = new Random();
 var subsystemNames = station.Subsystems.Select(s => s.Name).ToArray();
 

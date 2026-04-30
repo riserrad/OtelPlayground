@@ -151,15 +151,22 @@ public class RetryStormStrategyTests
         });
         listener.Start();
 
-        // Station with a single per-cycle quota slot — the retries should
-        // chew through it and trip the denied counter.
-        var station = new Station(repairsPerCycle: 1);
+        // Single retry budget: AlwaysFailingRetryStorm fails on every attempt, so the
+        // retry loop should consume the budget and trip the denied counter.
+        int retriesRemaining = 1;
+        bool TryConsumeRetry()
+        {
+            if (retriesRemaining <= 0) return false;
+            retriesRemaining--;
+            return true;
+        }
+
         var strategy = new AlwaysFailingRetryStorm();
         var repair = new RepairSystem(strategy);
         var sub = new Subsystem(TestSubsystem, 1.0) { Health = 50 };
 
         Assert.Throws<GeneralSpaceStationException>(() =>
-            repair.Repair(sub, 20, station.TryConsumeRepair));
+            repair.Repair(sub, 20, TryConsumeRetry));
 
         listener.Dispose();
 
