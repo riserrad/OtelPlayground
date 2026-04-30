@@ -116,12 +116,19 @@ public class GameLoopAsyncRepairTests
         };
         meterListener.SetMeasurementEventCallback<long>((inst, measurement, tags, state) =>
         {
-            Interlocked.Add(ref repairsFailedCount, measurement);
+            // Filter by subsystem.name + cancellation.reason so unrelated parallel
+            // tests emitting station.repairs.failed can't poison this assertion.
+            string? subsystemTag = null;
+            string? reasonTag = null;
             foreach (var tag in tags)
             {
-                if (tag.Key == "subsystem.name") capturedSubsystem = tag.Value as string;
-                else if (tag.Key == "cancellation.reason") capturedReason = tag.Value as string;
+                if (tag.Key == "subsystem.name") subsystemTag = tag.Value as string;
+                else if (tag.Key == "cancellation.reason") reasonTag = tag.Value as string;
             }
+            if (subsystemTag != "Oxygen" || reasonTag != "player_cancel") return;
+            Interlocked.Add(ref repairsFailedCount, measurement);
+            capturedSubsystem = subsystemTag;
+            capturedReason = reasonTag;
         });
         meterListener.Start();
 
@@ -178,7 +185,19 @@ public class GameLoopAsyncRepairTests
             }
         };
         meterListener.SetMeasurementEventCallback<long>((inst, measurement, tags, state) =>
-            Interlocked.Add(ref repairsFailedCount, measurement));
+        {
+            // Filter by subsystem.name so unrelated parallel tests emitting
+            // station.repairs.failed for other subsystems can't poison the
+            // == 0 assertion below.
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "subsystem.name" && (tag.Value as string) == "Oxygen")
+                {
+                    Interlocked.Add(ref repairsFailedCount, measurement);
+                    return;
+                }
+            }
+        });
         meterListener.Start();
 
         var (loop, station, _) = BuildLoop(maxCycles: 1);

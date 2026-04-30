@@ -32,16 +32,25 @@ public class RepairSystem
 
         // StartActivity inherits Activity.Current as parent even when an explicit
         // parentContext: default is supplied; null'ing Current first is the only
-        // reliable way to force the new Activity to be a true root span.
+        // reliable way to force the new Activity to be a true root span. The
+        // restore lives in finally so a throw from StartActivity or any SetTag
+        // can't leak the null Current into the caller's ambient context.
         var previousCurrent = Activity.Current;
         Activity.Current = null;
-        var activity = Telemetry.ActivitySource.StartActivity(
-            "RepairAction",
-            ActivityKind.Internal);
-        activity?.SetTag("subsystem.name", subsystem.Name);
-        activity?.SetTag("repair.requested", requested);
-        activity?.SetTag("repair.cycles_required", cyclesRequired);
-        Activity.Current = previousCurrent;
+        Activity? activity;
+        try
+        {
+            activity = Telemetry.ActivitySource.StartActivity(
+                "RepairAction",
+                ActivityKind.Internal);
+            activity?.SetTag("subsystem.name", subsystem.Name);
+            activity?.SetTag("repair.requested", requested);
+            activity?.SetTag("repair.cycles_required", cyclesRequired);
+        }
+        finally
+        {
+            Activity.Current = previousCurrent;
+        }
 
         return new InFlightRepair(subsystem, requested, cyclesRequired, activity);
     }
