@@ -156,15 +156,14 @@ public class GameDisplay
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╠══════════════════════════════════════════════════╣");
-        WritePaddedLine("  [1-4] Select   [R] Repair   [E] Emergency Pwr   ");
+        WritePaddedLine("  [1-4] Select [R] Repair [C] Cancel [E] Emerg Pwr");
         RenderFooterCounters(station, indicator);
-        var selectedName = station.Subsystems[selectedSubsystem].Name;
-        WritePaddedLine($"  Cycle: {station.CycleCount,-4}|  Score: {station.Score,-7}|  Sel: {selectedName,-10}");
+        RenderHandsRow(station);
         Console.WriteLine("╚══════════════════════════════════════════════════╝");
         Console.ResetColor();
     }
 
-    // Footer column budget: 19 + 2 + 11 + 2 + 7 + 8 = 49 (+1 trailing pad) = 50.
+    // Footer column budget: 19 + 2 + 9 + 8 = 38 (+12 trailing pad) = 50.
     // Badge color is regime-dependent; everything else is frame Cyan.
     private static void RenderFooterCounters(Station station, SampleRegimeIndicator? indicator)
     {
@@ -172,10 +171,24 @@ public class GameDisplay
         WritePaddedSegments(
             ("  [Q] Quit  Emerg: ", ConsoleColor.Cyan),
             ($"{station.EmergencyPowerRemaining,-2}", ConsoleColor.Cyan),
-            ("  Repairs: ", ConsoleColor.Cyan),
-            ($"{station.RepairsRemainingThisCycle,-2}", ConsoleColor.Cyan),
-            ("  Smp: ", ConsoleColor.Cyan),
+            ("    Smp: ", ConsoleColor.Cyan),
             ($"{badgeText,-8}", badgeColor));
+    }
+
+    // Yellow at saturation gives a glance-at-cell affordance: the player can tell
+    // whether pressing R will succeed without parsing the n/cap numbers.
+    private static void RenderHandsRow(Station station)
+    {
+        var inFlight = station.ActiveRepairs.InFlightCount;
+        var capacity = inFlight + station.ActiveRepairs.AvailableSlots;
+        var handsColor = inFlight >= capacity ? ConsoleColor.Yellow : ConsoleColor.White;
+        WritePaddedSegments(
+            ("  Cycle: ", ConsoleColor.Cyan),
+            ($"{station.CycleCount,-4}", ConsoleColor.White),
+            ("|  Score: ", ConsoleColor.Cyan),
+            ($"{station.Score,-7}", ConsoleColor.White),
+            ("|  Hands: ", ConsoleColor.Cyan),
+            ($"{inFlight}/{capacity}", handsColor));
     }
 
     // Splash picker row: "  [N] {modeName}" with mode label colored, padded to 50 cols.

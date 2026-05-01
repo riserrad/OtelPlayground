@@ -63,14 +63,19 @@ Don't unify these unintentionally — SpaceStationMonitor was bumped to 10 delib
 
 - **tests/SpaceStationMonitor.Tests/** - Unit tests for Station, RepairSystem, and CascadeEngine.
 
-**Span hierarchy per cycle:**
+**Span topology:**
 ```
-StationCycle (root)
+StationCycle (root, one per cycle)
 ├── SubsystemTick × 4      (one per subsystem, with health.before/after tags)
-├── RepairAction           (only on player repair; span events on leak/failure)
-├── CascadeCheck           (when any subsystem is critical)
+├── CascadeCheck × N       (when any subsystem is critical; links to source SubsystemTick)
 └── StationEvent           (on random events)
+
+RepairAction (root, lives 1-3 cycles after press)
+  ↑ each StationCycle while in-flight links to this Activity
+    (cycle → repair causality without parent-of falsification)
 ```
+
+`RepairAction` is started when a slot is claimed (`HandleRepair` → `RepairSystem.BeginRepair`) and stops on completion, player cancel, reject, or shutdown. It is a root span, never parented to `StationCycle` — every in-flight cycle emits an `ActivityLink` to its context. `CascadeCheck` is parented to `StationCycle` (same cycle) but adds an `ActivityLink` to its source `SubsystemTick` since the cascade is causally-from-but-not-a-child-of the tick.
 
 - **Service name:** `SpaceStationMonitor`
 - **Traces:** `StationCycle` (parent span per cycle), `SubsystemTick` (per subsystem), `RepairAction`, `CascadeCheck`, `StationEvent`

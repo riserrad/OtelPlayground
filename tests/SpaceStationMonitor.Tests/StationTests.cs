@@ -102,58 +102,29 @@ public class StationTests
     }
 
     [Fact]
-    public void NewStation_StartsWith3RepairsRemaining()
+    public void NewStation_StartsWith3FreeSlots()
     {
         var station = new Station();
 
-        Assert.Equal(3, station.RepairsRemainingThisCycle);
+        Assert.Equal(3, station.ActiveRepairs.AvailableSlots);
+        Assert.Equal(0, station.ActiveRepairs.InFlightCount);
     }
 
     [Fact]
-    public void TryConsumeRepair_DecrementsCounter()
+    public void Station_RespectsCustomConcurrentRepairs()
     {
-        var station = new Station();
+        var station = new Station(concurrentRepairs: 1);
 
-        Assert.True(station.TryConsumeRepair());
+        Assert.Equal(1, station.ActiveRepairs.AvailableSlots);
 
-        Assert.Equal(2, station.RepairsRemainingThisCycle);
-    }
-
-    [Fact]
-    public void TryConsumeRepair_ReturnsFalseWhenExhausted()
-    {
-        var station = new Station();
-
-        Assert.True(station.TryConsumeRepair());
-        Assert.True(station.TryConsumeRepair());
-        Assert.True(station.TryConsumeRepair());
-        Assert.False(station.TryConsumeRepair()); // 4th attempt fails
-        Assert.Equal(0, station.RepairsRemainingThisCycle);
-    }
-
-    [Fact]
-    public void StartNewCycle_ResetsRepairsRemaining()
-    {
-        var station = new Station();
-        station.TryConsumeRepair();
-        station.TryConsumeRepair();
+        var entry = new InFlightRepair(station.Subsystems[0], Requested: 20, CyclesRemaining: 1, RepairAction: null);
+        Assert.True(station.ActiveRepairs.TryStart(entry));
+        Assert.Equal(0, station.ActiveRepairs.AvailableSlots);
+        Assert.Equal(1, station.ActiveRepairs.InFlightCount);
 
         station.StartNewCycle(isBugActive: false);
-
-        Assert.Equal(3, station.RepairsRemainingThisCycle);
-    }
-
-    [Fact]
-    public void Station_RespectsCustomRepairsPerCycle()
-    {
-        var station = new Station(repairsPerCycle: 1);
-
-        Assert.Equal(1, station.RepairsRemainingThisCycle);
-        Assert.True(station.TryConsumeRepair());
-        Assert.False(station.TryConsumeRepair());
-
-        station.StartNewCycle(isBugActive: false);
-        Assert.Equal(1, station.RepairsRemainingThisCycle);
+        // Slot count is concurrent, not per-cycle: starting a new cycle does not free slots.
+        Assert.Equal(0, station.ActiveRepairs.AvailableSlots);
     }
 
     [Fact]
@@ -161,8 +132,8 @@ public class StationTests
     {
         // Mean ratio is ~3.14, not 4. Variance is additive (offset +0.4), so it
         // dilutes the multiplicative effect. Asymmetric window reflects per-run noise.
-        var stationLow = new Station(repairsPerCycle: 3, degradationMultiplier: 0.5);
-        var stationHigh = new Station(repairsPerCycle: 3, degradationMultiplier: 2.0);
+        var stationLow = new Station(concurrentRepairs: 3, degradationMultiplier: 0.5);
+        var stationHigh = new Station(concurrentRepairs: 3, degradationMultiplier: 2.0);
         stationLow.StartNewCycle(isBugActive: false);
         stationHigh.StartNewCycle(isBugActive: false);
 
@@ -189,9 +160,9 @@ public class StationTests
     public void Station_DefaultDegradationMultiplier_PreservesNoArgBehavior()
     {
         var stationNoArg = new Station();
-        var stationExplicit = new Station(repairsPerCycle: 3, degradationMultiplier: 1.0);
+        var stationExplicit = new Station(concurrentRepairs: 3, degradationMultiplier: 1.0);
 
-        Assert.Equal(stationExplicit.RepairsRemainingThisCycle, stationNoArg.RepairsRemainingThisCycle);
+        Assert.Equal(stationExplicit.ActiveRepairs.AvailableSlots, stationNoArg.ActiveRepairs.AvailableSlots);
         Assert.Equal(stationExplicit.EmergencyPowerRemaining, stationNoArg.EmergencyPowerRemaining);
         Assert.Equal(stationExplicit.HullIntegrity, stationNoArg.HullIntegrity);
         Assert.Equal(stationExplicit.Subsystems.Length, stationNoArg.Subsystems.Length);

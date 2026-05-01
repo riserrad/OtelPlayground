@@ -111,6 +111,17 @@ public sealed class GameLoop
                 }
 
                 var parentOverride = _strategy.OverrideStationCycleParent() ?? default;
+
+                // Build the link list from in-flight repairs before StartActivity. Each
+                // in-flight RepairAction Activity gets linked from the new StationCycle so
+                // the trace tree carries "this cycle relates to that in-flight repair."
+                var inFlightLinks = new List<ActivityLink>();
+                foreach (var inFlight in _station.ActiveRepairs.InFlight)
+                {
+                    if (inFlight.RepairAction is { Context: { } ctx } && ctx != default)
+                        inFlightLinks.Add(new ActivityLink(ctx));
+                }
+
                 using var cycleActivity = Telemetry.ActivitySource.StartActivity(
                     "StationCycle",
                     ActivityKind.Internal,
@@ -120,9 +131,46 @@ public sealed class GameLoop
                         new("bug.strategy", _strategy.Name),
                         new("bug.active", isBugActive),
                         new("cycle.number", _station.CycleCount + 1),
-                    });
+                    },
+                    links: inFlightLinks);
 
                 _station.StartNewCycle(isBugActive);
+
+                // Drain in-flight repairs: tick down remaining cycles, complete any that
+                // hit zero. CompleteRepair stops the saved RepairAction Activity, applies
+                // health, and emits the histogram + log.
+                _station.ActiveRepairs.DecrementAll();
+                foreach (var completed in _station.ActiveRepairs.DrainCompleted())
+                {
+                    var result = _repairSystem.CompleteRepair(completed);
+
+                    double effectiveness = result.Requested > 0
+                        ? (double)result.Applied / result.Requested * 100.0
+                        : 0;
+                    Telemetry.RepairEffectiveness.Record(effectiveness,
+                        new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
+                    _station.RecordRepair(effectiveness);
+
+                    if (!result.IsHealthy)
+                    {
+                        _logger.LogError("Repair leak on {Name}: requested {Requested}% applied {Applied}%",
+                            result.SubsystemName, result.Requested, result.Applied);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Repair applied to {Name}: {Before:F1}% → {After:F1}%",
+                            result.SubsystemName, result.HealthBefore, result.HealthAfter);
+                    }
+
+                    _display.SetRepairMessage(
+                        $"{result.SubsystemName} repair complete: {result.HealthBefore:F0}% → {result.DisplayedAfter:F0}%");
+                }
+
+                // Tick activities are saved per-subsystem so the cascade loop can link a
+                // cascade back to the tick that triggered it. Keyed by sub.Name (what the
+                // cascade engine asks for via cascade.SourceSubsystem), not the redirected
+                // actualTarget — under WrongTargetDegradationStrategy the two diverge.
+                var tickActivities = new Dictionary<string, Activity?>();
 
                 foreach (var sub in _station.Subsystems)
                 {
@@ -143,6 +191,8 @@ public sealed class GameLoop
                     foreach (var tag in _strategy.MutateTags("SubsystemTick", tickTags))
                         tickActivity?.SetTag(tag.Key, tag.Value);
 
+                    tickActivities[sub.Name] = tickActivity;
+
                     _logger.LogInformation("Subsystem {Name}: {Before:F1}% → {After:F1}%",
                         actualTarget.Name, healthBefore, actualTarget.Health);
                 }
@@ -157,6 +207,18 @@ public sealed class GameLoop
                 foreach (var cascade in cascades)
                 {
                     using var cascadeActivity = Telemetry.ActivitySource.StartActivity("CascadeCheck");
+
+                    // Link cascade to the source-tick activity that triggered it. Parent-of
+                    // would be wrong (the cascade isn't a child of the tick); a link carries
+                    // the causal relationship without falsifying parentage.
+                    if (cascadeActivity is not null
+                        && tickActivities.TryGetValue(cascade.SourceSubsystem, out var sourceTick)
+                        && sourceTick is not null
+                        && sourceTick.Context != default)
+                    {
+                        cascadeActivity.AddLink(new ActivityLink(sourceTick.Context));
+                    }
+
                     cascadeActivity?.SetTag("cascade.triggered", true);
                     cascadeActivity?.SetTag("source.subsystem", cascade.SourceSubsystem);
                     cascadeActivity?.SetTag("affected.subsystems",
@@ -224,6 +286,22 @@ public sealed class GameLoop
         {
             // Normal shutdown via Ctrl+C
         }
+        finally
+        {
+            // Stop any RepairAction Activities still in flight when the loop exits
+            // (Ctrl+C, hull-zero game-over, max-cycles cap). Without this, those
+            // Activities never get Stop()ed and surface as orphan spans in the trace
+            // export. cancellation.reason="shutdown" keeps the queryable dimension
+            // symmetric with the player-cancel path.
+            foreach (var entry in _station.ActiveRepairs.InFlight)
+            {
+                entry.RepairAction?.SetStatus(ActivityStatusCode.Error, "shutdown");
+                entry.RepairAction?.Stop();
+                Telemetry.RepairsFailed.Add(1,
+                    new KeyValuePair<string, object?>("subsystem.name", entry.Subsystem.Name),
+                    new KeyValuePair<string, object?>("cancellation.reason", "shutdown"));
+            }
+        }
     }
 
     private async Task PollInputAsync(CancellationTokenSource waitCts)
@@ -263,6 +341,7 @@ public sealed class GameLoop
             case '4': _selectedSubsystem = 3; _display.Render(_station, _selectedSubsystem, _indicator); break;
 
             case 'R': HandleRepair(); break;
+            case 'C': HandleCancelRepair(); break;
             case 'E': HandleEmergencyPower(); break;
 
             case 'Q':
@@ -305,69 +384,63 @@ public sealed class GameLoop
     {
         var sub = _station.Subsystems[_selectedSubsystem];
 
-        if (!_station.TryConsumeRepair())
+        if (sub.Health >= 100)
         {
-            Telemetry.RepairsDenied.Add(1,
-                new KeyValuePair<string, object?>("subsystem.name", sub.Name));
-            _logger.LogInformation("Repair denied on {Name}: quota exhausted this cycle", sub.Name);
-            _display.SetRepairMessage("No repairs left this cycle — wait for next tick");
+            _display.SetRepairMessage($"{sub.Name} is at full health.");
             _display.Render(_station, _selectedSubsystem, _indicator);
             return;
         }
 
         var requested = _repairSystem.GetRepairAmount();
-        var currentHealth = sub.Health;
-        var expectedHealth = Math.Min(100, currentHealth + requested);
+        var entry = _repairSystem.BeginRepair(sub, requested);
 
-        using var repairActivity = Telemetry.ActivitySource.StartActivity("RepairAction");
-
-        try
+        if (!_station.ActiveRepairs.TryStart(entry))
         {
-            var result = _repairSystem.Repair(sub, requested, _station.TryConsumeRepair);
+            // BeginRepair already started a RepairAction Activity; on rejection the
+            // unbacked Activity must be stopped immediately so it doesn't leak across
+            // cycles. The reject-Activity carries requested+cycles_required tags but
+            // never reaches CompleteRepair — that is the correct shape for "we tried,
+            // no slot was free, no repair occurred."
+            entry.RepairAction?.SetStatus(ActivityStatusCode.Error, "rejected");
+            entry.RepairAction?.Stop();
 
-            repairActivity?.SetTag("subsystem.name", result.SubsystemName);
-            repairActivity?.SetTag("repair.requested", result.Requested);
-            repairActivity?.SetTag("repair.applied", result.Applied);
-            repairActivity?.SetTag("repair.healthy", result.IsHealthy);
-
-            double effectiveness = result.Requested > 0
-                ? (double)result.Applied / result.Requested * 100.0
-                : 0;
-            Telemetry.RepairEffectiveness.Record(effectiveness,
-                new KeyValuePair<string, object?>("subsystem.name", result.SubsystemName));
-            _station.RecordRepair(effectiveness);
-
-            if (!result.IsHealthy)
-            {
-                repairActivity?.AddEvent(new ActivityEvent("RepairLeak",
-                    tags: new ActivityTagsCollection
-                    {
-                        { "repair.delta", result.Requested - result.Applied }
-                    }));
-
-                _logger.LogError("Repair leak on {Name}: requested {Requested}% applied {Applied}%",
-                    result.SubsystemName, result.Requested, result.Applied);
-            }
-            else
-            {
-                _logger.LogInformation("Repair applied to {Name}: {Before:F1}% → {After:F1}%",
-                    result.SubsystemName, result.HealthBefore, result.HealthAfter);
-            }
-
-            expectedHealth = result.DisplayedAfter;
-        }
-        catch (Exception ex)
-        {
-            repairActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            repairActivity?.AddException(ex);
-            repairActivity?.AddEvent(new ActivityEvent("RepairFailed"));
-
-            _logger.LogError(ex, "Repair failed on {Name}: requested {Requested}%",
-                sub.Name, requested);
+            Telemetry.RepairsDenied.Add(1,
+                new KeyValuePair<string, object?>("subsystem.name", sub.Name));
+            _logger.LogInformation("Repair denied on {Name}: all hands busy", sub.Name);
+            _display.SetRepairMessage("All hands busy.");
+            _display.Render(_station, _selectedSubsystem, _indicator);
+            return;
         }
 
-        _display.SetRepairMessage(
-            $"Repaired {sub.Name}: {currentHealth:F0}% → {expectedHealth:F0}%");
+        _logger.LogInformation("Repair started on {Name}: {Requested}% over {Cycles} cycle(s)",
+            sub.Name, requested, entry.CyclesRemaining);
+        _display.SetRepairMessage($"Started repair on {sub.Name}.");
+        _display.Render(_station, _selectedSubsystem, _indicator);
+    }
+
+    internal void HandleCancelRepair()
+    {
+        var sub = _station.Subsystems[_selectedSubsystem];
+        if (_station.ActiveRepairs.TryCancelOldestOn(sub, out var cancelled) && cancelled is not null)
+        {
+            cancelled.RepairAction?.AddEvent(new ActivityEvent("RepairCancelled",
+                tags: new ActivityTagsCollection
+                {
+                    { "cancellation.reason", "player_cancel" }
+                }));
+            cancelled.RepairAction?.SetStatus(ActivityStatusCode.Error, "cancelled");
+            cancelled.RepairAction?.Stop();
+
+            Telemetry.RepairsFailed.Add(1,
+                new KeyValuePair<string, object?>("subsystem.name", sub.Name),
+                new KeyValuePair<string, object?>("cancellation.reason", "player_cancel"));
+
+            _display.SetRepairMessage($"Cancelled repair on {sub.Name}.");
+        }
+        else
+        {
+            _display.SetRepairMessage($"Nothing to cancel on {sub.Name}.");
+        }
         _display.Render(_station, _selectedSubsystem, _indicator);
     }
 
